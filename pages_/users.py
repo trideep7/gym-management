@@ -2,6 +2,7 @@ import streamlit as st
 
 import db
 from services import auth as auth_service
+from utils.errors import report_unexpected_error, safe_action
 
 conn = db.get_connection()
 current_user = st.session_state.user
@@ -23,8 +24,9 @@ for u in auth_service.list_users(conn):
     cols[2].write("Active" if u["is_active"] else "Inactive")
     toggle_label = "Deactivate" if u["is_active"] else "Reactivate"
     if cols[3].button(toggle_label, key=f"user_toggle_{u['id']}"):
-        auth_service.set_user_active(conn, u["id"], not u["is_active"])
-        st.rerun()
+        ok, _ = safe_action(lambda u=u: auth_service.set_user_active(conn, u["id"], not u["is_active"]))
+        if ok:
+            st.rerun()
 
 st.subheader("Add Staff User")
 with st.form("new_user_form", clear_on_submit=True):
@@ -39,6 +41,8 @@ with st.form("new_user_form", clear_on_submit=True):
             st.rerun()
         except ValueError as e:
             st.error(str(e))
+        except Exception:
+            report_unexpected_error()
 
 st.subheader("Reset a Password")
 users = auth_service.list_users(conn)
@@ -49,5 +53,6 @@ with st.form("reset_password_form", clear_on_submit=True):
     )
     new_password = st.text_input("New Password", type="password", key="reset_new_password")
     if st.form_submit_button("Reset Password"):
-        auth_service.reset_password(conn, target_id, new_password)
-        st.success("Password reset.")
+        ok, _ = safe_action(lambda: auth_service.reset_password(conn, target_id, new_password))
+        if ok:
+            st.success("Password reset.")

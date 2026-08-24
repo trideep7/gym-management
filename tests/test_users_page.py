@@ -51,3 +51,34 @@ def test_staff_cannot_access_users_page(tmp_path, monkeypatch):
     at.run()
 
     assert any("do not have access" in el.value.lower() for el in at.error)
+
+
+def test_toggle_active_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test3.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos3"))
+    import db as db_module
+    from services import auth as auth_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    staff_id = auth_service.create_user(conn, "frontdesk2", "pw123456", "Front Desk Two", "staff")
+    conn.close()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(auth_service, "set_user_active", boom)
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/users.py")
+    at.run()
+
+    at.button(key=f"user_toggle_{staff_id}").click().run()
+
+    assert not at.exception
+    assert any("something went wrong" in el.value.lower() for el in at.error)
