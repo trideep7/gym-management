@@ -16,7 +16,10 @@ start_date = st.date_input("From", value=today - datetime.timedelta(days=6), key
 end_date = st.date_input("To", value=today, key="report_end")
 
 if st.button("Generate"):
-    st.session_state["report_range"] = (start_date, end_date)
+    if start_date > end_date:
+        st.warning("From date must be on or before the To date.")
+    else:
+        st.session_state["report_range"] = (start_date, end_date)
 
 report_range = st.session_state.get("report_range")
 if report_range is None:
