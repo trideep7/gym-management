@@ -90,3 +90,37 @@ def test_dashboard_signin_and_duplicate_same_day(tmp_path, monkeypatch):
     at.text_input[0].input("Riley").run()
     at.button(key=f"signin_{member_id}").click().run()
     assert any("already signed in" in el.value.lower() for el in at.info)
+
+
+def test_signin_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test4.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos4"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "222", "plan_id": plan_id})
+    conn.close()
+
+    from services import attendance as attendance_service
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(attendance_service, "sign_in", boom)
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    at.button(key=f"signin_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("something went wrong" in el.value.lower() for el in at.error)

@@ -4,6 +4,7 @@ import streamlit as st
 
 import db
 from services import attendance, members, payments
+from utils.errors import safe_action
 
 conn = db.get_connection()
 user = st.session_state.user
@@ -63,15 +64,16 @@ for m in results:
     cols[0].write(f"{m['first_name']} {m['surname'] or ''} — {m['mobile']}")
     cols[1].write(badge)
     if cols[2].button("Sign In", key=f"signin_{m['id']}"):
-        result = attendance.sign_in(conn, m["id"], user["id"])
-        if result["already_signed_in"]:
-            st.session_state.signin_flash = (
-                "info", f"{m['first_name']} already signed in today at {result['sign_in_time']}."
-            )
-        else:
-            st.session_state.signin_flash = ("success", f"{m['first_name']} signed in at {result['sign_in_time']}.")
-        st.session_state.signin_search_key_version += 1
-        st.rerun()
+        ok, result = safe_action(lambda: attendance.sign_in(conn, m["id"], user["id"]))
+        if ok:
+            if result["already_signed_in"]:
+                st.session_state.signin_flash = (
+                    "info", f"{m['first_name']} already signed in today at {result['sign_in_time']}."
+                )
+            else:
+                st.session_state.signin_flash = ("success", f"{m['first_name']} signed in at {result['sign_in_time']}.")
+            st.session_state.signin_search_key_version += 1
+            st.rerun()
 
 st.subheader("Today's Sign-Ins")
 if today_signins:
