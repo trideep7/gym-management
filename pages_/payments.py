@@ -2,6 +2,7 @@ import streamlit as st
 
 import db
 from services import payments as payments_service
+from utils.errors import safe_action
 
 conn = db.get_connection()
 user = st.session_state.user
@@ -30,16 +31,17 @@ with tab_plans:
             row[1].write(f"₹{plan['amount']:.2f}")
             row[2].write(f"{plan['duration_days']} days")
             if row[3].button("Delete", key=f"plan_delete_{plan['id']}"):
-                result = payments_service.delete_plan(conn, plan["id"])
-                if result == "deactivated":
-                    st.session_state.plan_flash = (
-                        f"'{plan['name']}' is assigned to a member or has past payments on "
-                        "record, so it was deactivated instead of deleted (it won't show up "
-                        "for new members or payments anymore)."
-                    )
-                else:
-                    st.session_state.plan_flash = f"Plan '{plan['name']}' deleted."
-                st.rerun()
+                ok, result = safe_action(lambda plan=plan: payments_service.delete_plan(conn, plan["id"]))
+                if ok:
+                    if result == "deactivated":
+                        st.session_state.plan_flash = (
+                            f"'{plan['name']}' is assigned to a member or has past payments on "
+                            "record, so it was deactivated instead of deleted (it won't show up "
+                            "for new members or payments anymore)."
+                        )
+                    else:
+                        st.session_state.plan_flash = f"Plan '{plan['name']}' deleted."
+                    st.rerun()
 
     with st.form("new_plan_form", clear_on_submit=True):
         name = st.text_input("Plan Name", key="plan_name")
@@ -82,6 +84,7 @@ with tab_status:
         row[4].write(last_payment["paid_on"] if last_payment else "—")
         row[5].write(entry["valid_until"] or "—")
         if row[6].button("Mark Paid", key=f"mark_paid_{entry['id']}", disabled=member_plan_id is None):
-            payments_service.mark_paid(conn, entry["id"], member_plan_id, user["id"])
-            st.session_state.payment_flash = f"Marked {entry['first_name']} as paid."
-            st.rerun()
+            ok, _ = safe_action(lambda: payments_service.mark_paid(conn, entry["id"], member_plan_id, user["id"]))
+            if ok:
+                st.session_state.payment_flash = f"Marked {entry['first_name']} as paid."
+                st.rerun()

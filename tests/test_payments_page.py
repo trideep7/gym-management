@@ -247,3 +247,36 @@ def test_delete_plan_in_use_deactivates_instead(tmp_path, monkeypatch):
     # gone from the Manage Plans list, but still correctly shown as Sam's
     # assigned plan in the Member Status list — exactly one mention left
     assert sum(1 for el in at.markdown if el.value == "Monthly") == 1
+
+
+def test_mark_paid_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test10.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos10"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "555", "plan_id": plan_id})
+    conn.close()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(payments_service, "mark_paid", boom)
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/payments.py")
+    at.run()
+
+    at.button(key=f"mark_paid_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("something went wrong" in el.value.lower() for el in at.error)
