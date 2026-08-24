@@ -327,3 +327,112 @@ def test_list_resets_to_page_1_when_search_changes(tmp_path, monkeypatch):
     assert any("1 member" in el.value for el in at.markdown)
     with pytest.raises(KeyError):
         at.button(key="member_page_next")
+
+
+def test_toggle_active_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test10.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos10"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "333", "plan_id": plan_id})
+    conn.close()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(members_service, "set_member_active", boom)
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"toggle_active_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("something went wrong" in el.value.lower() for el in at.error)
+
+
+def test_deactivated_member_disappears_then_reappears_with_show_inactive(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test11.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos11"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Casey", "mobile": "444", "plan_id": plan_id})
+    members_service.set_member_active(conn, member_id, False)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    # deactivated, and the filter is off by default -> not in the list, no
+    # way to reach the Reactivate button
+    assert not any("Casey" in el.value for el in at.markdown)
+    with pytest.raises(KeyError):
+        at.button(key=f"toggle_active_{member_id}")
+
+    at.checkbox(key="member_show_inactive").set_value(True).run()
+
+    assert any("Casey" in el.value for el in at.markdown)
+    reactivate_button = at.button(key=f"toggle_active_{member_id}")
+    assert reactivate_button.label == "Reactivate"
+
+    reactivate_button.click().run()
+    assert not at.exception
+
+
+def test_duplicate_mobile_shows_warning_but_still_allows_saving(tmp_path, monkeypatch):
+    # Existing, already-correct behavior (warn, don't block — family members
+    # sometimes share a number) — this locks it in with a test so a future
+    # change to this page can't silently regress it.
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test12.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos12"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    members_service.create_member(conn, {"first_name": "Riley", "mobile": "999", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key="show_add_member_button").click().run()
+    at.text_input(key="add_first_name").input("Jordan").run()
+    at.text_input(key="add_mobile").input("999").run()
+
+    assert any("already use this mobile number" in el.value.lower() for el in at.warning)
+
+    at.button(key="save_new_member").click().run()
+
+    assert not at.exception
+    assert "saved" in at.success[0].value.lower()

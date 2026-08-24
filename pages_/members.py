@@ -5,6 +5,7 @@ import streamlit as st
 import db
 from services import members as members_service
 from services import payments as payments_service
+from utils.errors import report_unexpected_error, safe_action
 
 conn = db.get_connection()
 
@@ -170,6 +171,8 @@ if st.session_state.show_add_member_form:
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
+            except Exception:
+                report_unexpected_error()
 
 elif st.session_state.editing_member_id is not None:
     member_id = st.session_state.editing_member_id
@@ -193,11 +196,14 @@ elif st.session_state.editing_member_id is not None:
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
+            except Exception:
+                report_unexpected_error()
         toggle_label = "Deactivate Member" if m["is_active"] else "Reactivate Member"
         if col_toggle.button(toggle_label, key=f"toggle_active_{member_id}"):
-            members_service.set_member_active(conn, member_id, not m["is_active"])
-            st.session_state.editing_member_id = None
-            st.rerun()
+            ok, _ = safe_action(lambda: members_service.set_member_active(conn, member_id, not m["is_active"]))
+            if ok:
+                st.session_state.editing_member_id = None
+                st.rerun()
 
 else:
     if st.session_state.get("member_flash"):
@@ -211,6 +217,7 @@ else:
     col_search, col_search_btn = st.columns([4, 1], vertical_alignment="bottom")
     query = col_search.text_input("Search by name or mobile", key="member_search_query")
     col_search_btn.button("Search", key="member_search_button")
+    show_inactive = st.checkbox("Show inactive members", key="member_show_inactive")
 
     MEMBERS_PAGE_SIZE = 20
     if "member_list_page" not in st.session_state:
@@ -219,7 +226,7 @@ else:
         st.session_state.member_list_page = 1
         st.session_state.member_list_last_query = query
 
-    results = members_service.search_members(conn, query)
+    results = members_service.search_members(conn, query, active_only=not show_inactive)
     total = len(results)
     total_pages = max(1, -(-total // MEMBERS_PAGE_SIZE))
     st.session_state.member_list_page = min(max(st.session_state.member_list_page, 1), total_pages)
@@ -258,8 +265,9 @@ else:
             st.rerun()
         toggle_label = "Deactivate" if m["is_active"] else "Reactivate"
         if row[5].button(toggle_label, key=f"toggle_active_{m['id']}"):
-            members_service.set_member_active(conn, m["id"], not m["is_active"])
-            st.rerun()
+            ok, _ = safe_action(lambda member=m: members_service.set_member_active(conn, member["id"], not member["is_active"]))
+            if ok:
+                st.rerun()
 
     if total_pages > 1:
         col_prev, col_page, col_next = st.columns([1, 2, 1])
