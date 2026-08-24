@@ -2,6 +2,7 @@ import streamlit as st
 
 import db
 from services import equipment as equipment_service
+from utils.errors import safe_action
 
 conn = db.get_connection()
 
@@ -13,8 +14,9 @@ with st.form("new_equipment_form", clear_on_submit=True):
     notes = st.text_area("Notes", key="equip_notes")
     if st.form_submit_button("Add Equipment"):
         if name:
-            equipment_service.create_equipment(conn, name, int(quantity), notes)
-            st.success(f"Added '{name}'.")
+            ok, _ = safe_action(lambda: equipment_service.create_equipment(conn, name, int(quantity), notes))
+            if ok:
+                st.success(f"Added '{name}'.")
         else:
             st.error("Name is required.")
 
@@ -34,5 +36,6 @@ else:
         row[1].write(item["quantity"])
         row[2].write(item["notes"] or "—")
         if row[3].button("Delete", key=f"equip_delete_{item['id']}"):
-            equipment_service.delete_equipment(conn, item["id"])
-            st.rerun()
+            ok, _ = safe_action(lambda item=item: equipment_service.delete_equipment(conn, item["id"]))
+            if ok:
+                st.rerun()

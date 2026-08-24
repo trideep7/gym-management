@@ -85,3 +85,34 @@ def test_delete_removes_item_immediately(tmp_path, monkeypatch):
     assert not at.exception
     with pytest.raises(KeyError):
         at.button(key=f"equip_delete_{equipment_id}")
+
+
+def test_delete_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test4.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos4"))
+    import db as db_module
+    from services import equipment as equipment_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    equipment_id = equipment_service.create_equipment(conn, "Dumbbell Rack", 2)
+    conn.close()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(equipment_service, "delete_equipment", boom)
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/equipment.py")
+    at.run()
+
+    at.button(key=f"equip_delete_{equipment_id}").click().run()
+
+    assert not at.exception
+    assert any("something went wrong" in el.value.lower() for el in at.error)
