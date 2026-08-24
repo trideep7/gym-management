@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+data/gym.db
+data/photos/
+.pytest_cache/
+
+# Docs, planning notes, and AI-assistant tooling config — not part of the app
+*.md
+*.bat
+docs/
+.jetro/
+.cursor/
+.agents/
+.windsurfrules
+.mcp.json
+.github/copilot-instructions.md
+WhatsApp Image*.jpeg
