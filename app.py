@@ -1,15 +1,31 @@
+import logging
+
 import streamlit as st
 
 import db
+import logging_setup
 import ui
 from services import auth
+from utils.errors import safe_action
+
+logging_setup.setup_logging()
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Fitness Tribe Gym Management", layout="wide")
 ui.apply_theme()
 
-conn = db.get_connection()
-db.init_db(conn)
-db.seed_admin(conn)
+try:
+    conn = db.get_connection()
+    db.init_db(conn)
+    db.seed_admin(conn)
+except Exception:
+    logger.exception("Failed to start the app (database initialization)")
+    st.error(
+        "Couldn't start the app — there may be a problem with the data "
+        "folder permissions. Please check that the app has write access to "
+        "its data folder and restart."
+    )
+    st.stop()
 
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -17,7 +33,15 @@ if "user" not in st.session_state:
 if st.session_state.user is None:
     session_token = st.query_params.get("session")
     if session_token:
-        restored_user = auth.get_session_user(conn, session_token)
+        try:
+            restored_user = auth.get_session_user(conn, session_token)
+        except Exception:
+            # Failing open to the login screen is the right degraded
+            # behavior here — logging it is enough; showing an alarming
+            # error banner on top of "please log in again" would be worse,
+            # not better.
+            logger.exception("Failed to restore session from token")
+            restored_user = None
         if restored_user:
             st.session_state.user = restored_user
 
@@ -29,13 +53,22 @@ def login_view():
         username = st.text_input("Username", key="login_username")
         password = st.text_input("Password", type="password", key="login_password")
         if st.button("Log In", key="login_button"):
-            user = auth.authenticate(conn, username, password)
-            if user:
-                st.session_state.user = user
-                st.query_params["session"] = auth.create_session(conn, user["id"])
-                st.rerun()
-            else:
-                st.error("Invalid username or password")
+            def _do_login():
+                user = auth.authenticate(conn, username, password)
+                if user is None:
+                    return None
+                token = auth.create_session(conn, user["id"])
+                return user, token
+
+            ok, result = safe_action(_do_login)
+            if ok:
+                if result is None:
+                    st.error("Invalid username or password")
+                else:
+                    user, token = result
+                    st.session_state.user = user
+                    st.query_params["session"] = token
+                    st.rerun()
 
 
 if st.session_state.user is None:
@@ -61,7 +94,7 @@ else:
         if st.button("Log Out", key="logout_button"):
             session_token = st.query_params.get("session")
             if session_token:
-                auth.delete_session(conn, session_token)
+                safe_action(lambda: auth.delete_session(conn, session_token))
                 del st.query_params["session"]
             st.session_state.user = None
             st.rerun()
