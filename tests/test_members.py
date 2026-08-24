@@ -78,3 +78,26 @@ def test_save_photo_writes_file_and_returns_filename(tmp_path):
     assert os.path.exists(os.path.join(photos_dir, filename))
     with open(os.path.join(photos_dir, filename), "rb") as f:
         assert f.read() == b"fake-image-bytes"
+
+
+def test_save_photo_rejects_disallowed_extension(tmp_path):
+    with pytest.raises(ValueError):
+        members.save_photo(b"fake-bytes", member_id=1, ext="exe", photos_dir=str(tmp_path))
+
+
+def test_save_photo_rejects_path_traversal_disguised_as_extension(tmp_path):
+    # Before this fix, an upload whose filename had no "." at all (e.g. one
+    # crafted to bypass Streamlit's client-side file_uploader(type=...)
+    # filter) would flow straight through as the "extension", and the
+    # slashes/".." in it would land in the final filename unescaped.
+    with pytest.raises(ValueError):
+        members.save_photo(
+            b"fake-bytes", member_id=1, ext="../../../tmp/evil", photos_dir=str(tmp_path)
+        )
+    assert not os.path.exists(os.path.join(str(tmp_path), "..", "..", "..", "tmp", "evil"))
+
+
+def test_save_photo_accepts_extension_with_leading_dot_and_mixed_case(tmp_path):
+    filename = members.save_photo(b"fake-bytes", member_id=7, ext=".PNG", photos_dir=str(tmp_path))
+    assert filename == "member_7.png"
+    assert os.path.exists(os.path.join(str(tmp_path), "member_7.png"))

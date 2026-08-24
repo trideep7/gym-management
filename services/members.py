@@ -82,9 +82,15 @@ def set_member_active(conn, member_id, is_active):
     conn.commit()
 
 
+ALLOWED_PHOTO_EXTENSIONS = {"jpg", "jpeg", "png"}
+
+
 def save_photo(photo_bytes, member_id, ext, photos_dir):
+    normalized_ext = ext.lstrip(".").lower()
+    if normalized_ext not in ALLOWED_PHOTO_EXTENSIONS:
+        raise ValueError(f"Unsupported photo file type: '{ext}'. Use JPG or PNG.")
     os.makedirs(photos_dir, exist_ok=True)
-    filename = f"member_{member_id}.{ext.lstrip('.')}"
+    filename = f"member_{member_id}.{normalized_ext}"
     with open(os.path.join(photos_dir, filename), "wb") as f:
         f.write(photo_bytes)
     return filename
