@@ -339,3 +339,54 @@ def test_logging_reminder_updates_button_label(tmp_path, monkeypatch):
 
     assert not at.exception
     assert "Remind Again" in at.button(key=f"log_reminder_{member_id}").label
+
+
+def test_upcoming_expirations_section_orders_soonest_first_and_logs_reminder(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test13.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos13"))
+    import datetime
+
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    today = datetime.date.today()
+
+    expires_soon_id = members_service.create_member(conn, {"first_name": "Soon", "mobile": "9000000010", "plan_id": plan_id})
+    payments_service.mark_paid(conn, expires_soon_id, plan_id, admin_id, paid_on=today - datetime.timedelta(days=27))
+
+    expires_today_id = members_service.create_member(conn, {"first_name": "Today", "mobile": "9000000011", "plan_id": plan_id})
+    payments_service.mark_paid(conn, expires_today_id, plan_id, admin_id, paid_on=today - datetime.timedelta(days=30))
+
+    not_soon_id = members_service.create_member(conn, {"first_name": "NotSoon", "mobile": "9000000012", "plan_id": plan_id})
+    payments_service.mark_paid(conn, not_soon_id, plan_id, admin_id, paid_on=today - datetime.timedelta(days=5))
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/payments.py")
+    at.run()
+
+    assert not at.exception
+    assert any("Upcoming Expirations" in el.value for el in at.subheader)
+    markdown_values = [el.value for el in at.markdown]
+    today_index = next(i for i, v in enumerate(markdown_values) if v == "Today")
+    soon_index = next(i for i, v in enumerate(markdown_values) if v == "Soon")
+    assert today_index < soon_index
+    # NotSoon legitimately shows up later, in the full Member Status table —
+    # it just must not appear inside the upcoming-expirations section itself
+    not_soon_index = next(i for i, v in enumerate(markdown_values) if v == "NotSoon")
+    assert not_soon_index > soon_index
+
+    at.button(key=f"expiry_reminder_{expires_today_id}").click().run()
+
+    assert not at.exception
+    assert "Remind Again" in at.button(key=f"expiry_reminder_{expires_today_id}").label

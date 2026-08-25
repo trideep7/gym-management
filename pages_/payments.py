@@ -58,6 +58,31 @@ with tab_status:
     if st.session_state.get("payment_flash"):
         st.success(st.session_state.pop("payment_flash"))
 
+    st.subheader("Upcoming Expirations (Next 7 Days)")
+    upcoming = payments_service.upcoming_expirations(conn, within_days=7)
+    if upcoming:
+        upcoming_header = st.columns([2, 2, 2, 2, 2])
+        upcoming_header[0].markdown("**Name**")
+        upcoming_header[1].markdown("**Phone**")
+        upcoming_header[2].markdown("**Plan**")
+        upcoming_header[3].markdown("**Expires On**")
+        upcoming_header[4].markdown("**Reminder**")
+        upcoming_plan_names = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
+        for entry in upcoming:
+            upcoming_row = st.columns([2, 2, 2, 2, 2])
+            upcoming_row[0].write(f"{entry['first_name']} {entry['surname'] or ''}")
+            upcoming_row[1].write(entry["mobile"])
+            upcoming_row[2].write(upcoming_plan_names.get(entry.get("plan_id"), "—"))
+            upcoming_row[3].write(format_date(entry["valid_until"]))
+            last = reminders_service.last_reminder(conn, entry["id"])
+            reminder_label = "Log Reminder" if last is None else f"Remind Again — last: {format_date(last['sent_at'][:10])}"
+            if upcoming_row[4].button(reminder_label, key=f"expiry_reminder_{entry['id']}"):
+                ok, _ = safe_action(lambda entry=entry: reminders_service.log_reminder(conn, entry["id"], user["id"]))
+                if ok:
+                    st.rerun()
+    else:
+        st.write("No plans expiring in the next 7 days.")
+
     status_filter = st.selectbox("Filter by status", ["All", "paid", "overdue", "no_payment"], key="status_filter")
     filter_value = None if status_filter == "All" else status_filter
     entries = payments_service.list_members_with_status(conn, filter_value)
