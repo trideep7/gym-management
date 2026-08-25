@@ -74,6 +74,13 @@ CREATE TABLE IF NOT EXISTS payments (
     recorded_by INTEGER NOT NULL REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS payment_reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL REFERENCES members(id),
+    sent_by INTEGER NOT NULL REFERENCES users(id),
+    sent_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL REFERENCES members(id),

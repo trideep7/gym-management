@@ -6,7 +6,10 @@ def test_init_db_creates_all_tables(conn):
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
-    expected = {"users", "members", "membership_plans", "payments", "attendance", "equipment"}
+    expected = {
+        "users", "members", "membership_plans", "payments", "attendance",
+        "equipment", "payment_reminders",
+    }
     assert expected <= tables
 
 
@@ -65,3 +68,8 @@ def test_init_db_migrates_existing_members_table_without_plan_id(tmp_path):
     row = upgraded_conn.execute("SELECT first_name, plan_id FROM members WHERE first_name = 'Sam'").fetchone()
     assert row["first_name"] == "Sam"
     assert row["plan_id"] is None
+
+
+def test_payment_reminders_table_has_expected_columns(conn):
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(payment_reminders)")}
+    assert cols == {"id", "member_id", "sent_by", "sent_at"}
