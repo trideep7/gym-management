@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 data/gym.db
+data/gym.db.bak-*
 data/photos/
 data/app.log*
 .pytest_cache/
