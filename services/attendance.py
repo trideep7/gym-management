@@ -41,6 +41,19 @@ def list_today(conn):
     return [dict(r) for r in rows]
 
 
+def member_history(conn, member_id, limit=None):
+    sql = (
+        "SELECT * FROM attendance WHERE member_id = ? "
+        "ORDER BY sign_in_date DESC, sign_in_time DESC"
+    )
+    params = [member_id]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def counts_by_day(conn, start_date, end_date):
     rows = conn.execute(
         "SELECT sign_in_date AS date, COUNT(*) AS count FROM attendance "

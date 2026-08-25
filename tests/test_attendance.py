@@ -127,3 +127,30 @@ def test_most_active_orders_by_checkin_count(conn):
     leaders = attendance.most_active(conn, yesterday_str, today)
     assert leaders[0]["member_id"] == member_a
     assert leaders[0]["checkins"] == 2
+
+
+def test_member_history_orders_newest_first_and_respects_limit(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    base = datetime.datetime(2026, 1, 1, 9, 0, 0)
+    for i in range(5):
+        attendance.sign_in(conn, member_id, user_id, when=base + datetime.timedelta(days=i))
+
+    history = attendance.member_history(conn, member_id, limit=3)
+
+    assert len(history) == 3
+    assert history[0]["sign_in_date"] == (base + datetime.timedelta(days=4)).date().isoformat()
+    assert history[2]["sign_in_date"] == (base + datetime.timedelta(days=2)).date().isoformat()
+
+
+def test_member_history_without_limit_returns_all(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    base = datetime.datetime(2026, 1, 1, 9, 0, 0)
+    for i in range(5):
+        attendance.sign_in(conn, member_id, user_id, when=base + datetime.timedelta(days=i))
+
+    assert len(attendance.member_history(conn, member_id)) == 5
+
+
+def test_member_history_empty_for_member_with_no_signins(conn):
+    member_id, _ = setup_member_and_user(conn)
+    assert attendance.member_history(conn, member_id) == []
