@@ -514,8 +514,12 @@ def test_view_screen_shows_last_3_signins(tmp_path, monkeypatch):
 
     assert not at.exception
     markdown_values = [el.value for el in at.markdown]
+    # Date and Time as separate columns with a header row
+    assert "**Date**" in markdown_values
+    assert "**Time**" in markdown_values
     # newest of the 5 sign-ins (Aug 5) shown, oldest two (Aug 1, Aug 2) not
-    assert any("05-Aug-2026" in v and "09:00 AM" in v for v in markdown_values)
+    assert "05-Aug-2026" in markdown_values
+    assert "09:00 AM" in markdown_values
     assert not any("01-Aug-2026" in v for v in markdown_values)
     assert not any("02-Aug-2026" in v for v in markdown_values)
 

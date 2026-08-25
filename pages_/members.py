@@ -255,8 +255,13 @@ elif st.session_state.viewing_member_id is not None:
     st.subheader("Recent Sign-Ins")
     signin_history = attendance_service.member_history(conn, member_id, limit=3)
     if signin_history:
+        signin_header = st.columns([1, 1])
+        signin_header[0].markdown("**Date**")
+        signin_header[1].markdown("**Time**")
         for visit in signin_history:
-            st.write(f"{format_date(visit['sign_in_date'])} at {format_time(visit['sign_in_time'])}")
+            signin_row = st.columns([1, 1])
+            signin_row[0].write(format_date(visit["sign_in_date"]))
+            signin_row[1].write(format_time(visit["sign_in_time"]))
     else:
         st.write("No sign-ins recorded yet.")
 
