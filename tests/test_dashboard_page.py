@@ -67,7 +67,7 @@ def test_dashboard_shows_todays_signins(tmp_path, monkeypatch):
     assert not any("14:32" in el.value for el in at.markdown)
 
 
-def test_dashboard_signin_and_duplicate_same_day(tmp_path, monkeypatch):
+def test_dashboard_signin_twice_same_day_warns_then_allows(tmp_path, monkeypatch):
     monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test3.db"))
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos3"))
     import db as db_module
@@ -102,7 +102,24 @@ def test_dashboard_signin_and_duplicate_same_day(tmp_path, monkeypatch):
 
     at.text_input[0].input("Riley").run()
     at.button(key=f"signin_{member_id}").click().run()
-    assert any("already signed in" in el.value.lower() for el in at.info)
+    # a same-day repeat now warns and asks for confirmation rather than
+    # either blocking silently or signing in with no visibility at all
+    assert not at.exception
+    assert any("already signed in 1 time" in el.value.lower() for el in at.warning)
+    assert at.button(key=f"confirm_signin_{member_id}")
+    assert at.button(key=f"cancel_signin_{member_id}")
+    # Clicking "Sign In Anyway" itself is verified separately via a real
+    # browser (Playwright): AppTest has no structural model of st.dialog, and
+    # a real dialog's button callback runs on a different thread than AppTest
+    # drives — the click registers but the resulting attendance write never
+    # lands within AppTest's simulation, even though it works in a real
+    # browser (same gap documented for the unpaid/inactive confirm dialog).
+    # Before this dialog even opened, the DB already has exactly one visit
+    # (from the first sign-in above) — confirm that much here.
+    conn = db_module.get_connection(str(tmp_path / "test3.db"))
+    count = conn.execute("SELECT COUNT(*) AS c FROM attendance WHERE member_id = ?", (member_id,)).fetchone()["c"]
+    assert count == 1
+    conn.close()
 
 
 def test_signin_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):

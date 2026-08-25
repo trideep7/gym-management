@@ -25,6 +25,11 @@ three_months_ago = (today - datetime.timedelta(days=90)).isoformat()
 
 all_members = members.search_members(conn, "", active_only=True)
 today_signins = attendance.list_today(conn)
+# a member can now sign in more than once a day, so this counts distinct
+# members rather than total check-in events, to keep meaning "how many
+# different people came in today" rather than "how many times the Sign In
+# button was clicked today"
+checked_in_today_count = len({row["member_id"] for row in today_signins})
 overdue_count = sum(
     1 for m in all_members if payments.get_status(conn, m["id"])["status"] == "overdue"
 )
@@ -38,7 +43,7 @@ col2.metric("Active Members", active_members_count)
 col3.metric("Monthly Active Users", monthly_active_users)
 
 col4, col5, col6 = st.columns(3)
-col4.metric("Checked In Today", len(today_signins))
+col4.metric("Checked In Today", checked_in_today_count)
 col5.metric("Payments Overdue", overdue_count)
 col6.metric("Monthly Revenue So Far", f"₹{monthly_revenue:.2f}")
 
@@ -46,16 +51,10 @@ col6.metric("Monthly Revenue So Far", f"₹{monthly_revenue:.2f}")
 def complete_signin(member):
     ok, result = safe_action(lambda: attendance.sign_in(conn, member["id"], user["id"]))
     if ok:
-        if result["already_signed_in"]:
-            st.session_state.signin_flash = (
-                "info",
-                f"{member['first_name']} already signed in today at {format_time(result['sign_in_time'])}.",
-            )
-        else:
-            st.session_state.signin_flash = (
-                "success",
-                f"{member['first_name']} signed in at {format_time(result['sign_in_time'])}.",
-            )
+        st.session_state.signin_flash = (
+            "success",
+            f"{member['first_name']} signed in at {format_time(result['sign_in_time'])}.",
+        )
         st.session_state.signin_search_key_version += 1
         st.rerun()
 
@@ -101,6 +100,10 @@ for m in results:
             reasons.append("This member is marked inactive.")
         if status["status"] != "paid":
             reasons.append(f"This member has not paid (status: {status['status'].replace('_', ' ').title()}).")
+        already_today = attendance.todays_signin_count(conn, m["id"])
+        if already_today:
+            visit_word = "time" if already_today == 1 else "times"
+            reasons.append(f"This member has already signed in {already_today} {visit_word} today.")
         if reasons:
             confirm_signin_dialog(m, reasons)
         else:
