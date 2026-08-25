@@ -280,3 +280,62 @@ def test_mark_paid_failure_shows_friendly_message_not_traceback(tmp_path, monkey
 
     assert not at.exception
     assert any("something went wrong" in el.value.lower() for el in at.error)
+
+
+def test_reminder_button_appears_for_unpaid_and_not_for_paid(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test11.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos11"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    paid_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    unpaid_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000556", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payments_service.mark_paid(conn, paid_id, plan_id, admin_id)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/payments.py")
+    at.run()
+
+    assert not at.exception
+    with pytest.raises(KeyError):
+        at.button(key=f"log_reminder_{paid_id}")
+    assert at.button(key=f"log_reminder_{unpaid_id}").label == "Log Reminder"
+
+
+def test_logging_reminder_updates_button_label(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test12.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos12"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000556", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/payments.py")
+    at.run()
+
+    at.button(key=f"log_reminder_{member_id}").click().run()
+
+    assert not at.exception
+    assert "Remind Again" in at.button(key=f"log_reminder_{member_id}").label

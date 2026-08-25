@@ -2,6 +2,7 @@ import streamlit as st
 
 import db
 from services import payments as payments_service
+from services import reminders as reminders_service
 from utils.dates import format_date
 from utils.errors import safe_action
 
@@ -65,7 +66,7 @@ with tab_status:
     plan_names = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
 
     if entries:
-        header = st.columns([2, 2, 2, 2, 2, 2, 1])
+        header = st.columns([2, 2, 2, 2, 2, 2, 1, 2])
         header[0].markdown("**Name**")
         header[1].markdown("**Phone**")
         header[2].markdown("**Status**")
@@ -73,9 +74,10 @@ with tab_status:
         header[4].markdown("**Last Paid**")
         header[5].markdown("**Due Date**")
         header[6].markdown("**Mark Paid**")
+        header[7].markdown("**Reminder**")
 
     for entry in entries:
-        row = st.columns([2, 2, 2, 2, 2, 2, 1])
+        row = st.columns([2, 2, 2, 2, 2, 2, 1, 2])
         row[0].write(f"{entry['first_name']} {entry['surname'] or ''}")
         row[1].write(entry["mobile"])
         row[2].write(entry["status"].replace("_", " ").title())
@@ -89,3 +91,12 @@ with tab_status:
             if ok:
                 st.session_state.payment_flash = f"Marked {entry['first_name']} as paid."
                 st.rerun()
+        if entry["status"] != "paid":
+            last = reminders_service.last_reminder(conn, entry["id"])
+            reminder_label = "Log Reminder" if last is None else f"Remind Again — last: {format_date(last['sent_at'][:10])}"
+            if row[7].button(reminder_label, key=f"log_reminder_{entry['id']}"):
+                ok, _ = safe_action(lambda: reminders_service.log_reminder(conn, entry["id"], user["id"]))
+                if ok:
+                    st.rerun()
+        else:
+            row[7].write("—")
