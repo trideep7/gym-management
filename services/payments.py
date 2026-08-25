@@ -94,6 +94,17 @@ def list_members_with_status(conn, status_filter=None):
     return result
 
 
+def upcoming_expirations(conn, within_days=7):
+    cutoff = (datetime.date.today() + datetime.timedelta(days=within_days)).isoformat()
+    entries = [
+        entry
+        for entry in list_members_with_status(conn, "paid")
+        if entry["valid_until"] <= cutoff
+    ]
+    entries.sort(key=lambda entry: entry["valid_until"])
+    return entries
+
+
 def payment_history(conn, member_id, limit=None):
     sql = (
         "SELECT payments.*, membership_plans.name AS plan_name FROM payments "

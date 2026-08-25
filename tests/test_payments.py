@@ -115,3 +115,31 @@ def test_payment_history_respects_limit(conn):
     # newest first — the 8th payment (i=7) was paid latest
     assert history[0]["paid_on"] == (base + datetime.timedelta(days=7 * 30)).isoformat()
     assert history[5]["paid_on"] == (base + datetime.timedelta(days=2 * 30)).isoformat()
+
+
+def test_upcoming_expirations_includes_only_paid_members_expiring_within_window(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    today = datetime.date.today()
+
+    expires_today = members.create_member(conn, {"first_name": "ExpiresToday", "mobile": "9000000001", "plan_id": plan_id})
+    payments.mark_paid(conn, expires_today, plan_id, user_id, paid_on=today - datetime.timedelta(days=30))
+
+    expires_in_3_days = members.create_member(conn, {"first_name": "ExpiresSoon", "mobile": "9000000002", "plan_id": plan_id})
+    payments.mark_paid(conn, expires_in_3_days, plan_id, user_id, paid_on=today - datetime.timedelta(days=27))
+
+    expires_in_10_days = members.create_member(conn, {"first_name": "ExpiresLater", "mobile": "9000000003", "plan_id": plan_id})
+    payments.mark_paid(conn, expires_in_10_days, plan_id, user_id, paid_on=today - datetime.timedelta(days=20))
+
+    overdue = members.create_member(conn, {"first_name": "Overdue", "mobile": "9000000004", "plan_id": plan_id})
+    payments.mark_paid(conn, overdue, plan_id, user_id, paid_on=today - datetime.timedelta(days=35))
+
+    no_payment = members.create_member(conn, {"first_name": "NoPay", "mobile": "9000000005", "plan_id": plan_id})
+
+    upcoming = payments.upcoming_expirations(conn, within_days=7)
+
+    ids = [entry["id"] for entry in upcoming]
+    assert ids == [expires_today, expires_in_3_days]
+    assert expires_in_10_days not in ids
+    assert overdue not in ids
+    assert no_payment not in ids
