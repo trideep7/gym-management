@@ -1,33 +1,25 @@
 import datetime
-import sqlite3
 
 
 def sign_in(conn, member_id, recorded_by, when=None):
     now = when or datetime.datetime.now()
     date_str = now.date().isoformat()
     time_str = now.time().strftime("%H:%M:%S")
-    existing = conn.execute(
-        "SELECT sign_in_time FROM attendance WHERE member_id = ? AND sign_in_date = ?",
-        (member_id, date_str),
+    conn.execute(
+        "INSERT INTO attendance (member_id, sign_in_date, sign_in_time, recorded_by) VALUES (?, ?, ?, ?)",
+        (member_id, date_str, time_str, recorded_by),
+    )
+    conn.commit()
+    return {"sign_in_time": time_str}
+
+
+def todays_signin_count(conn, member_id):
+    today = datetime.date.today().isoformat()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM attendance WHERE member_id = ? AND sign_in_date = ?",
+        (member_id, today),
     ).fetchone()
-    if existing:
-        return {"already_signed_in": True, "sign_in_time": existing["sign_in_time"]}
-    try:
-        conn.execute(
-            "INSERT INTO attendance (member_id, sign_in_date, sign_in_time, recorded_by) VALUES (?, ?, ?, ?)",
-            (member_id, date_str, time_str, recorded_by),
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        # Another request won the race between our check above and this
-        # INSERT — re-read the row it created and resolve the same way the
-        # normal duplicate-sign-in path does.
-        existing = conn.execute(
-            "SELECT sign_in_time FROM attendance WHERE member_id = ? AND sign_in_date = ?",
-            (member_id, date_str),
-        ).fetchone()
-        return {"already_signed_in": True, "sign_in_time": existing["sign_in_time"]}
-    return {"already_signed_in": False, "sign_in_time": time_str}
+    return row["c"]
 
 
 def list_today(conn):

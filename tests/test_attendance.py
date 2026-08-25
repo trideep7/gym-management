@@ -13,20 +13,35 @@ def setup_member_and_user(conn, name="Sam"):
 def test_sign_in_records_visit(conn):
     member_id, user_id = setup_member_and_user(conn)
     result = attendance.sign_in(conn, member_id, user_id)
-    assert result["already_signed_in"] is False
     assert result["sign_in_time"]
 
 
-def test_duplicate_sign_in_same_day_is_noop(conn):
+def test_sign_in_allows_multiple_visits_same_day(conn):
     member_id, user_id = setup_member_and_user(conn)
     first = attendance.sign_in(conn, member_id, user_id)
     second = attendance.sign_in(conn, member_id, user_id)
-    assert second["already_signed_in"] is True
-    assert second["sign_in_time"] == first["sign_in_time"]
+    assert first["sign_in_time"]
+    assert second["sign_in_time"]
     count = conn.execute(
         "SELECT COUNT(*) AS c FROM attendance WHERE member_id = ?", (member_id,)
     ).fetchone()["c"]
-    assert count == 1
+    assert count == 2
+
+
+def test_todays_signin_count_reflects_repeat_visits(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    assert attendance.todays_signin_count(conn, member_id) == 0
+    attendance.sign_in(conn, member_id, user_id)
+    assert attendance.todays_signin_count(conn, member_id) == 1
+    attendance.sign_in(conn, member_id, user_id)
+    assert attendance.todays_signin_count(conn, member_id) == 2
+
+
+def test_todays_signin_count_ignores_other_days(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+    attendance.sign_in(conn, member_id, user_id, when=yesterday)
+    assert attendance.todays_signin_count(conn, member_id) == 0
 
 
 def test_sign_in_on_different_days_creates_two_rows(conn):
@@ -60,59 +75,6 @@ def test_counts_by_day_aggregates_correctly(conn):
     assert counts == [{"date": today, "count": 2}]
 
 
-
-
-def test_sign_in_handles_concurrent_insert_race(conn):
-    # Simulates two people clicking "Sign In" for the same member at almost
-    # the same instant: both pass the "does a row already exist?" check
-    # before either has inserted, so the second INSERT hits the table's
-    # UNIQUE(member_id, sign_in_date) constraint for real. sign_in() must
-    # recover from that the same way it handles the normal duplicate case,
-    # not let the IntegrityError escape.
-    member_id, user_id = setup_member_and_user(conn)
-    today = datetime.date.today().isoformat()
-
-    # Insert the "winning" row directly, simulating the other request that
-    # got there first.
-    conn.execute(
-        "INSERT INTO attendance (member_id, sign_in_date, sign_in_time, recorded_by) "
-        "VALUES (?, ?, ?, ?)",
-        (member_id, today, "09:00:00", user_id),
-    )
-    conn.commit()
-
-    # Make sign_in()'s own pre-check believe no row exists yet (as if it ran
-    # its SELECT before the other request's INSERT landed), so it falls
-    # through to the INSERT and hits the real UNIQUE constraint. A real
-    # sqlite3.Connection's `execute` attribute is read-only (can't be
-    # monkeypatched directly), so wrap it in a thin forwarding proxy instead
-    # — sign_in() only ever calls .execute()/.commit() on `conn`, so a
-    # duck-typed stand-in works fine.
-    class _EmptyResult:
-        def fetchone(self):
-            return None
-
-    class FlakySelectConn:
-        def __init__(self, real_conn):
-            self._real = real_conn
-            self._select_count = 0
-
-        def execute(self, sql, params=()):
-            if sql.startswith("SELECT sign_in_time FROM attendance") and self._select_count == 0:
-                self._select_count += 1
-                return _EmptyResult()
-            return self._real.execute(sql, params)
-
-        def commit(self):
-            self._real.commit()
-
-    result = attendance.sign_in(FlakySelectConn(conn), member_id, user_id)
-
-    assert result == {"already_signed_in": True, "sign_in_time": "09:00:00"}
-    count = conn.execute(
-        "SELECT COUNT(*) AS c FROM attendance WHERE member_id = ?", (member_id,)
-    ).fetchone()["c"]
-    assert count == 1
 
 
 def test_most_active_orders_by_checkin_count(conn):
