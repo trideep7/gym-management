@@ -110,7 +110,13 @@ def get_photos_dir():
 def get_connection(db_path=None):
     path = db_path or get_db_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
+    # check_same_thread=False: st.dialog/st.fragment callbacks run on a
+    # different thread than the main script, and this connection is created
+    # once at the top of each page and closed over by any dialog on it.
+    # SQLite itself is safe for this (serialized threading mode); we're only
+    # disabling Python's same-thread guard, not concurrent-write safety,
+    # which was never guaranteed by a single shared connection anyway.
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

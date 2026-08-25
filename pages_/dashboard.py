@@ -4,6 +4,7 @@ import streamlit as st
 
 import db
 from services import attendance, members, payments
+from utils.dates import format_time
 from utils.errors import safe_action
 
 conn = db.get_connection()
@@ -41,6 +42,37 @@ col4.metric("Checked In Today", len(today_signins))
 col5.metric("Payments Overdue", overdue_count)
 col6.metric("Monthly Revenue So Far", f"₹{monthly_revenue:.2f}")
 
+
+def complete_signin(member):
+    ok, result = safe_action(lambda: attendance.sign_in(conn, member["id"], user["id"]))
+    if ok:
+        if result["already_signed_in"]:
+            st.session_state.signin_flash = (
+                "info",
+                f"{member['first_name']} already signed in today at {format_time(result['sign_in_time'])}.",
+            )
+        else:
+            st.session_state.signin_flash = (
+                "success",
+                f"{member['first_name']} signed in at {format_time(result['sign_in_time'])}.",
+            )
+        st.session_state.signin_search_key_version += 1
+        st.rerun()
+
+
+@st.dialog("Confirm Sign In")
+def confirm_signin_dialog(member, reasons):
+    for reason in reasons:
+        st.warning(reason)
+    display_name = f"{member['first_name']} {member['surname'] or ''}".strip()
+    st.write(f"Sign in **{display_name}** anyway?")
+    col_confirm, col_cancel = st.columns(2)
+    if col_confirm.button("Sign In Anyway", key=f"confirm_signin_{member['id']}"):
+        complete_signin(member)
+    if col_cancel.button("Cancel", key=f"cancel_signin_{member['id']}"):
+        st.rerun()
+
+
 st.subheader("Sign In")
 if "signin_search_key_version" not in st.session_state:
     st.session_state.signin_search_key_version = 0
@@ -64,16 +96,15 @@ for m in results:
     cols[0].write(f"{m['first_name']} {m['surname'] or ''} — {m['mobile']}")
     cols[1].write(badge)
     if cols[2].button("Sign In", key=f"signin_{m['id']}"):
-        ok, result = safe_action(lambda: attendance.sign_in(conn, m["id"], user["id"]))
-        if ok:
-            if result["already_signed_in"]:
-                st.session_state.signin_flash = (
-                    "info", f"{m['first_name']} already signed in today at {result['sign_in_time']}."
-                )
-            else:
-                st.session_state.signin_flash = ("success", f"{m['first_name']} signed in at {result['sign_in_time']}.")
-            st.session_state.signin_search_key_version += 1
-            st.rerun()
+        reasons = []
+        if not m["is_active"]:
+            reasons.append("This member is marked inactive.")
+        if status["status"] != "paid":
+            reasons.append(f"This member has not paid (status: {status['status'].replace('_', ' ').title()}).")
+        if reasons:
+            confirm_signin_dialog(m, reasons)
+        else:
+            complete_signin(m)
 
 st.subheader("Today's Sign-Ins")
 if today_signins:
@@ -86,8 +117,15 @@ if today_signins:
     start = (signins_page - 1) * SIGNINS_PAGE_SIZE
     page_signins = today_signins[start:start + SIGNINS_PAGE_SIZE]
 
+    header = st.columns([3, 2, 2])
+    header[0].markdown("**Name**")
+    header[1].markdown("**Phone**")
+    header[2].markdown("**Time**")
     for row in page_signins:
-        st.write(f"{row['first_name']} {row['surname'] or ''} — {row['sign_in_time']}")
+        row_cols = st.columns([3, 2, 2])
+        row_cols[0].write(f"{row['first_name']} {row['surname'] or ''}")
+        row_cols[1].write(row["mobile"])
+        row_cols[2].write(format_time(row["sign_in_time"]))
 
     if total_signin_pages > 1:
         col_prev, col_page, col_next = st.columns([1, 2, 1])

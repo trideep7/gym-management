@@ -34,6 +34,8 @@ def test_dashboard_shows_metrics(tmp_path, monkeypatch):
 def test_dashboard_shows_todays_signins(tmp_path, monkeypatch):
     monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test2.db"))
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos2"))
+    import datetime
+
     import db as db_module
     from services import attendance, auth, members, payments
 
@@ -43,7 +45,7 @@ def test_dashboard_shows_todays_signins(tmp_path, monkeypatch):
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
     member_id = members.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
     user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
-    attendance.sign_in(conn, member_id, user_id)
+    attendance.sign_in(conn, member_id, user_id, when=datetime.datetime(2026, 8, 25, 14, 32, 0))
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -53,7 +55,16 @@ def test_dashboard_shows_todays_signins(tmp_path, monkeypatch):
     login_as_admin(at)
 
     assert not at.exception
-    assert any("Riley" in el.value for el in at.markdown)
+    markdown_values = [el.value for el in at.markdown]
+    # Name, Phone, and Time as separate elements with a header row
+    assert "**Name**" in markdown_values
+    assert "**Phone**" in markdown_values
+    assert "**Time**" in markdown_values
+    assert any(el.value == "Riley" for el in at.markdown)
+    assert any(el.value == "9000000222" for el in at.markdown)
+    # 12-hour clock with AM/PM, not the raw 24-hour "14:32:00"
+    assert any(el.value == "02:32 PM" for el in at.markdown)
+    assert not any("14:32" in el.value for el in at.markdown)
 
 
 def test_dashboard_signin_and_duplicate_same_day(tmp_path, monkeypatch):
@@ -68,6 +79,8 @@ def test_dashboard_signin_and_duplicate_same_day(tmp_path, monkeypatch):
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
     member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payments_service.mark_paid(conn, member_id, plan_id, admin_id)
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -104,6 +117,8 @@ def test_signin_failure_shows_friendly_message_not_traceback(tmp_path, monkeypat
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
     member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payments_service.mark_paid(conn, member_id, plan_id, admin_id)
     conn.close()
 
     from services import attendance as attendance_service
@@ -124,3 +139,104 @@ def test_signin_failure_shows_friendly_message_not_traceback(tmp_path, monkeypat
 
     assert not at.exception
     assert any("something went wrong" in el.value.lower() for el in at.error)
+
+
+def test_signin_warns_before_signing_in_unpaid_member(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test5.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos5"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    at.button(key=f"signin_{member_id}").click().run()
+
+    assert not at.exception
+    # sign-in must not have happened yet — it's waiting on confirmation
+    assert not at.success
+    assert any("has not paid" in el.value.lower() for el in at.warning)
+    assert at.button(key=f"confirm_signin_{member_id}")
+    assert at.button(key=f"cancel_signin_{member_id}")
+    # Clicking "Sign In Anyway" itself is verified separately via a real
+    # browser (Playwright): AppTest has no structural model of st.dialog (no
+    # `at.dialog` accessor, unlike `at.button`/`at.error`), and a real
+    # Streamlit dialog's button callback runs on a different thread than
+    # AppTest drives — the click registers but the resulting attendance
+    # write never lands within AppTest's simulation, even though it works
+    # correctly in a real browser.
+
+
+def test_signin_cancel_does_not_sign_in_unpaid_member(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test6.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos6"))
+    import db as db_module
+    from services import attendance as attendance_service
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    at.button(key=f"signin_{member_id}").click().run()
+    at.button(key=f"cancel_signin_{member_id}").click().run()
+
+    assert not at.exception
+    assert not at.success
+    conn = db_module.get_connection(str(tmp_path / "test6.db"))
+    count = conn.execute("SELECT COUNT(*) AS c FROM attendance WHERE member_id = ?", (member_id,)).fetchone()["c"]
+    assert count == 0
+    conn.close()
+
+
+def test_signin_no_warning_for_paid_active_member(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test7.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos7"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payments_service.mark_paid(conn, member_id, plan_id, admin_id)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    at.button(key=f"signin_{member_id}").click().run()
+
+    assert not at.exception
+    assert not at.warning
+    assert "signed in" in at.success[0].value.lower()

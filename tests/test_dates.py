@@ -1,6 +1,6 @@
 import datetime
 
-from utils.dates import format_date
+from utils.dates import format_date, format_time
 
 
 def test_format_date_from_iso_string():
@@ -17,3 +17,23 @@ def test_format_date_none_returns_dash():
 
 def test_format_date_empty_string_returns_dash():
     assert format_date("") == "—"
+
+
+def test_format_time_morning():
+    assert format_time("09:05:00") == "09:05 AM"
+
+
+def test_format_time_afternoon():
+    assert format_time("14:32:07") == "02:32 PM"
+
+
+def test_format_time_noon():
+    assert format_time("12:00:00") == "12:00 PM"
+
+
+def test_format_time_midnight():
+    assert format_time("00:00:00") == "12:00 AM"
+
+
+def test_format_time_none_returns_dash():
+    assert format_time(None) == "—"

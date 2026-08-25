@@ -33,7 +33,7 @@ def sign_in(conn, member_id, recorded_by, when=None):
 def list_today(conn):
     today = datetime.date.today().isoformat()
     rows = conn.execute(
-        "SELECT attendance.*, members.first_name, members.surname FROM attendance "
+        "SELECT attendance.*, members.first_name, members.surname, members.mobile FROM attendance "
         "JOIN members ON attendance.member_id = members.id "
         "WHERE sign_in_date = ? ORDER BY sign_in_time DESC",
         (today,),
