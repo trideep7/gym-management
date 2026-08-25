@@ -30,22 +30,24 @@ def member_form(key_prefix, existing=None):
 
     data = {"photo_path": existing.get("photo_path")}
 
+    st.caption("Fields marked with * are required.")
+
     plan_ids = [p["id"] for p in plans]
     plan_labels = {p["id"]: p["name"] for p in plans}
     current_plan_id = existing.get("plan_id")
     plan_index = plan_ids.index(current_plan_id) if current_plan_id in plan_ids else 0
     data["plan_id"] = st.selectbox(
-        "Membership Plan", plan_ids, index=plan_index,
+        "Membership Plan *", plan_ids, index=plan_index,
         format_func=lambda pid: plan_labels[pid], key=f"{key_prefix}_plan_id",
     )
 
     col1, col2 = st.columns(2)
     data["surname"] = col1.text_input("Surname", value=existing.get("surname", ""), key=f"{key_prefix}_surname")
-    data["first_name"] = col2.text_input("Name", value=existing.get("first_name", ""), key=f"{key_prefix}_first_name")
+    data["first_name"] = col2.text_input("Name *", value=existing.get("first_name", ""), key=f"{key_prefix}_first_name")
     data["address"] = st.text_input("Address", value=existing.get("address", ""), key=f"{key_prefix}_address")
 
     col3, col4, col5 = st.columns(3)
-    data["mobile"] = col3.text_input("Mobile", value=existing.get("mobile", ""), key=f"{key_prefix}_mobile")
+    data["mobile"] = col3.text_input("Mobile *", value=existing.get("mobile", ""), key=f"{key_prefix}_mobile")
     data["email"] = col4.text_input("Email", value=existing.get("email", ""), key=f"{key_prefix}_email")
     data["instagram_id"] = col5.text_input("Instagram ID", value=existing.get("instagram_id", ""), key=f"{key_prefix}_instagram")
 
