@@ -481,6 +481,45 @@ def test_view_screen_shows_contact_info_and_payment_history(tmp_path, monkeypatc
     assert at.button(key=f"toggle_active_view_{member_id}")
 
 
+def test_view_screen_shows_last_3_signins(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test18.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos18"))
+    import datetime
+
+    import db as db_module
+    from services import attendance as attendance_service
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    base = datetime.datetime(2026, 8, 1, 9, 0, 0)
+    for i in range(5):
+        attendance_service.sign_in(conn, member_id, admin_id, when=base + datetime.timedelta(days=i))
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"view_button_{member_id}").click().run()
+
+    assert not at.exception
+    markdown_values = [el.value for el in at.markdown]
+    # newest of the 5 sign-ins (Aug 5) shown, oldest two (Aug 1, Aug 2) not
+    assert any("05-Aug-2026" in v and "09:00 AM" in v for v in markdown_values)
+    assert not any("01-Aug-2026" in v for v in markdown_values)
+    assert not any("02-Aug-2026" in v for v in markdown_values)
+
+
 def test_edit_from_view_returns_to_view_not_list(tmp_path, monkeypatch):
     monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test16.db"))
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos16"))

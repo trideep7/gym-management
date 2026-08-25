@@ -3,10 +3,11 @@ import datetime
 import streamlit as st
 
 import db
+from services import attendance as attendance_service
 from services import members as members_service
 from services import payments as payments_service
 from services import reminders as reminders_service
-from utils.dates import format_date
+from utils.dates import format_date, format_time
 from utils.errors import report_unexpected_error, safe_action
 
 conn = db.get_connection()
@@ -250,6 +251,14 @@ elif st.session_state.viewing_member_id is not None:
             hist_row[3].write(format_date(payment["valid_until"]))
     else:
         st.write("No payments recorded yet.")
+
+    st.subheader("Recent Sign-Ins")
+    signin_history = attendance_service.member_history(conn, member_id, limit=3)
+    if signin_history:
+        for visit in signin_history:
+            st.write(f"{format_date(visit['sign_in_date'])} at {format_time(visit['sign_in_time'])}")
+    else:
+        st.write("No sign-ins recorded yet.")
 
     st.subheader("Payment Reminders")
     reminder_history = reminders_service.list_reminders(conn, member_id)
