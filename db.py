@@ -86,8 +86,7 @@ CREATE TABLE IF NOT EXISTS attendance (
     member_id INTEGER NOT NULL REFERENCES members(id),
     sign_in_date TEXT NOT NULL,
     sign_in_time TEXT NOT NULL,
-    recorded_by INTEGER NOT NULL REFERENCES users(id),
-    UNIQUE(member_id, sign_in_date)
+    recorded_by INTEGER NOT NULL REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -133,6 +132,7 @@ def init_db(conn):
     conn.executescript(SCHEMA)
     conn.commit()
     _migrate_add_member_plan_id(conn)
+    _migrate_remove_attendance_unique_constraint(conn)
     os.makedirs(get_photos_dir(), exist_ok=True)
 
 
@@ -140,6 +140,32 @@ def _migrate_add_member_plan_id(conn):
     cols = [row[1] for row in conn.execute("PRAGMA table_info(members)")]
     if "plan_id" not in cols:
         conn.execute("ALTER TABLE members ADD COLUMN plan_id INTEGER REFERENCES membership_plans(id)")
+        conn.commit()
+
+
+def _migrate_remove_attendance_unique_constraint(conn):
+    # SQLite can't drop a table constraint via ALTER TABLE, so an existing
+    # database (created before members could sign in more than once a day)
+    # needs its attendance table rebuilt without it.
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance'"
+    ).fetchone()
+    if row and "UNIQUE" in row["sql"].upper():
+        conn.executescript(
+            """
+            CREATE TABLE attendance_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_id INTEGER NOT NULL REFERENCES members(id),
+                sign_in_date TEXT NOT NULL,
+                sign_in_time TEXT NOT NULL,
+                recorded_by INTEGER NOT NULL REFERENCES users(id)
+            );
+            INSERT INTO attendance_new (id, member_id, sign_in_date, sign_in_time, recorded_by)
+                SELECT id, member_id, sign_in_date, sign_in_time, recorded_by FROM attendance;
+            DROP TABLE attendance;
+            ALTER TABLE attendance_new RENAME TO attendance;
+            """
+        )
         conn.commit()
 
 
