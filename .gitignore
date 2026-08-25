@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 data/gym.db
 data/photos/
+data/app.log*
 .pytest_cache/
 
 # Docs, planning notes, and AI-assistant tooling config — not part of the app
