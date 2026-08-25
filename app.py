@@ -72,7 +72,12 @@ def login_view():
 
 
 if st.session_state.user is None:
-    login_view()
+    # st.navigation must be called on every rerun, even here — Streamlit
+    # keeps showing whatever page set the *last* st.navigation() call
+    # registered until a new call overrides it, so without this the sidebar
+    # nav from before logout stayed visible next to the login form.
+    login_page = st.navigation([st.Page(login_view, title="Login")], position="hidden")
+    login_page.run()
 else:
     ui.set_sidebar_logo()
 
