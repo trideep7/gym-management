@@ -5,9 +5,12 @@ import streamlit as st
 import db
 from services import members as members_service
 from services import payments as payments_service
+from services import reminders as reminders_service
+from utils.dates import format_date
 from utils.errors import report_unexpected_error, safe_action
 
 conn = db.get_connection()
+user = st.session_state.user
 
 st.title("Members")
 
@@ -151,6 +154,11 @@ if "show_add_member_form" not in st.session_state:
     st.session_state.show_add_member_form = False
 if "editing_member_id" not in st.session_state:
     st.session_state.editing_member_id = None
+if "viewing_member_id" not in st.session_state:
+    st.session_state.viewing_member_id = None
+
+if st.session_state.get("member_flash"):
+    st.success(st.session_state.pop("member_flash"))
 
 if st.session_state.show_add_member_form:
     if st.button("← Back to list", key="cancel_add_member"):
@@ -181,7 +189,7 @@ elif st.session_state.editing_member_id is not None:
     member_id = st.session_state.editing_member_id
     m = members_service.get_member(conn, member_id)
 
-    if st.button("← Back to list", key="cancel_edit_member"):
+    if st.button("← Back", key="cancel_edit_member"):
         st.session_state.editing_member_id = None
         st.rerun()
 
@@ -189,8 +197,7 @@ elif st.session_state.editing_member_id is not None:
     key_prefix = f"edit_{member_id}"
     edited, photo_file = member_form(key_prefix, existing=m)
     if edited is not None:
-        col_save, col_toggle = st.columns(2)
-        if col_save.button("Save Changes", key=f"save_{key_prefix}"):
+        if st.button("Save Changes", key=f"save_{key_prefix}"):
             try:
                 members_service.update_member(conn, member_id, edited)
                 save_uploaded_photo(member_id, photo_file, edited)
@@ -201,17 +208,74 @@ elif st.session_state.editing_member_id is not None:
                 st.error(str(e))
             except Exception:
                 report_unexpected_error()
-        toggle_label = "Deactivate Member" if m["is_active"] else "Reactivate Member"
-        if col_toggle.button(toggle_label, key=f"toggle_active_{member_id}"):
-            ok, _ = safe_action(lambda: members_service.set_member_active(conn, member_id, not m["is_active"]))
+
+elif st.session_state.viewing_member_id is not None:
+    member_id = st.session_state.viewing_member_id
+    m = members_service.get_member(conn, member_id)
+
+    if st.button("← Back to list", key="cancel_view_member"):
+        st.session_state.viewing_member_id = None
+        st.rerun()
+
+    st.subheader(f"{m['first_name']} {m['surname'] or ''}")
+    status = payments_service.get_status(conn, member_id)
+    if status["status"] == "paid":
+        badge = "🟢 Paid"
+    elif status["status"] == "overdue":
+        badge = "🔴 Overdue"
+    else:
+        badge = "⚪ No payment yet"
+    active_label = "🟢 Active" if m["is_active"] else "⚪ Inactive"
+    st.write(f"{active_label}  |  {badge}")
+
+    plan_labels_view = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
+    st.write(f"**Mobile:** {m['mobile']}")
+    st.write(f"**Email:** {m['email'] or '—'}")
+    st.write(f"**Address:** {m['address'] or '—'}")
+    st.write(f"**Plan:** {plan_labels_view.get(m['plan_id'], '—')}")
+
+    st.subheader("Recent Payments")
+    history = payments_service.payment_history(conn, member_id, limit=6)
+    if history:
+        hist_header = st.columns([2, 2, 2, 2])
+        hist_header[0].markdown("**Plan**")
+        hist_header[1].markdown("**Amount**")
+        hist_header[2].markdown("**Paid On**")
+        hist_header[3].markdown("**Valid Until**")
+        for payment in history:
+            hist_row = st.columns([2, 2, 2, 2])
+            hist_row[0].write(payment["plan_name"])
+            hist_row[1].write(f"₹{payment['amount']:.2f}")
+            hist_row[2].write(format_date(payment["paid_on"]))
+            hist_row[3].write(format_date(payment["valid_until"]))
+    else:
+        st.write("No payments recorded yet.")
+
+    st.subheader("Payment Reminders")
+    reminder_history = reminders_service.list_reminders(conn, member_id)
+    if reminder_history:
+        for reminder in reminder_history:
+            st.write(f"Sent by {reminder['sent_by_name']} on {format_date(reminder['sent_at'][:10])}")
+    else:
+        st.write("No reminders logged yet.")
+
+    if status["status"] != "paid" or not m["is_active"]:
+        if st.button("Log Reminder Sent", key=f"log_reminder_{member_id}"):
+            ok, _ = safe_action(lambda: reminders_service.log_reminder(conn, member_id, user["id"]))
             if ok:
-                st.session_state.editing_member_id = None
                 st.rerun()
 
-else:
-    if st.session_state.get("member_flash"):
-        st.success(st.session_state.pop("member_flash"))
+    col_edit, col_toggle = st.columns(2)
+    if col_edit.button("Edit", key=f"edit_from_view_{member_id}"):
+        st.session_state.editing_member_id = member_id
+        st.rerun()
+    toggle_label = "Deactivate Member" if m["is_active"] else "Reactivate Member"
+    if col_toggle.button(toggle_label, key=f"toggle_active_view_{member_id}"):
+        ok, _ = safe_action(lambda: members_service.set_member_active(conn, member_id, not m["is_active"]))
+        if ok:
+            st.rerun()
 
+else:
     col_title, col_add = st.columns([4, 1])
     if col_add.button("+ Add Member", key="show_add_member_button"):
         st.session_state.show_add_member_form = True
@@ -241,13 +305,12 @@ else:
 
     st.write(f"{total} member(s) found")
     if page_results:
-        header = st.columns([3, 2, 2, 2, 1, 2])
+        header = st.columns([3, 2, 2, 2, 2])
         header[0].markdown("**Name**")
         header[1].markdown("**Phone**")
         header[2].markdown("**Plan**")
         header[3].markdown("**Payment**")
-        header[4].markdown("**Edit**")
-        header[5].markdown("**Active**")
+        header[4].markdown("**View**")
 
     for m in page_results:
         status = payments_service.get_status(conn, m["id"])
@@ -258,19 +321,14 @@ else:
         else:
             badge = "⚪ No payment yet"
 
-        row = st.columns([3, 2, 2, 2, 1, 2])
+        row = st.columns([3, 2, 2, 2, 2])
         row[0].write(f"{m['first_name']} {m['surname'] or ''}")
         row[1].write(m["mobile"])
         row[2].write(plan_labels.get(m["plan_id"], "—"))
         row[3].write(badge)
-        if row[4].button("Edit", key=f"edit_button_{m['id']}"):
-            st.session_state.editing_member_id = m["id"]
+        if row[4].button("View", key=f"view_button_{m['id']}"):
+            st.session_state.viewing_member_id = m["id"]
             st.rerun()
-        toggle_label = "Deactivate" if m["is_active"] else "Reactivate"
-        if row[5].button(toggle_label, key=f"toggle_active_{m['id']}"):
-            ok, _ = safe_action(lambda member=m: members_service.set_member_active(conn, member["id"], not member["is_active"]))
-            if ok:
-                st.rerun()
 
     if total_pages > 1:
         col_prev, col_page, col_next = st.columns([1, 2, 1])

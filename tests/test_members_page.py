@@ -113,7 +113,7 @@ def test_search_finds_added_member(tmp_path, monkeypatch):
     assert any("1 member" in el.value for el in at.markdown)
 
 
-def test_search_results_show_no_inline_edit_fields(tmp_path, monkeypatch):
+def test_search_results_show_view_button_not_inline_edit_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test9.db"))
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos9"))
     import db as db_module
@@ -140,8 +140,11 @@ def test_search_results_show_no_inline_edit_fields(tmp_path, monkeypatch):
     assert not at.exception
     with pytest.raises(KeyError):
         at.text_input(key=f"edit_{member_id}_first_name")
-    assert at.button(key=f"edit_button_{member_id}")
-    assert at.button(key=f"toggle_active_{member_id}")
+    with pytest.raises(KeyError):
+        at.button(key=f"edit_button_{member_id}")
+    with pytest.raises(KeyError):
+        at.button(key=f"toggle_active_{member_id}")
+    assert at.button(key=f"view_button_{member_id}")
 
 
 def test_edit_member_flow(tmp_path, monkeypatch):
@@ -166,8 +169,8 @@ def test_edit_member_flow(tmp_path, monkeypatch):
     at.switch_page("pages_/members.py")
     at.run()
 
-    at.text_input(key="member_search_query").input("Riley").run()
-    at.button(key=f"edit_button_{member_id}").click().run()
+    at.button(key=f"view_button_{member_id}").click().run()
+    at.button(key=f"edit_from_view_{member_id}").click().run()
 
     assert not at.exception
     assert at.text_input(key=f"edit_{member_id}_first_name").value == "Riley"
@@ -177,9 +180,6 @@ def test_edit_member_flow(tmp_path, monkeypatch):
 
     assert not at.exception
     assert "updated" in at.success[0].value.lower()
-    # must land back on the list view, not stay on the edit view
-    with pytest.raises(KeyError):
-        at.text_input(key=f"edit_{member_id}_first_name")
 
     conn = db_module.get_connection(str(tmp_path / "test10.db"))
     row = conn.execute("SELECT occupation FROM members WHERE id = ?", (member_id,)).fetchone()
@@ -280,14 +280,14 @@ def test_list_paginates_at_20_members_per_page(tmp_path, monkeypatch):
 
     assert not at.exception
     assert any("25 member" in el.value for el in at.markdown)
-    # exactly 20 Edit buttons on page 1, not all 25
-    edit_buttons = [b for b in at.button if b.key and b.key.startswith("edit_button_")]
+    # exactly 20 View buttons on page 1, not all 25
+    edit_buttons = [b for b in at.button if b.key and b.key.startswith("view_button_")]
     assert len(edit_buttons) == 20
 
     at.button(key="member_page_next").click().run()
 
     assert not at.exception
-    edit_buttons_page2 = [b for b in at.button if b.key and b.key.startswith("edit_button_")]
+    edit_buttons_page2 = [b for b in at.button if b.key and b.key.startswith("view_button_")]
     assert len(edit_buttons_page2) == 5
     assert any("Page 2 of 2" in el.value for el in at.markdown)
 
@@ -356,7 +356,8 @@ def test_toggle_active_failure_shows_friendly_message_not_traceback(tmp_path, mo
     at.switch_page("pages_/members.py")
     at.run()
 
-    at.button(key=f"toggle_active_{member_id}").click().run()
+    at.button(key=f"view_button_{member_id}").click().run()
+    at.button(key=f"toggle_active_view_{member_id}").click().run()
 
     assert not at.exception
     assert any("something went wrong" in el.value.lower() for el in at.error)
@@ -386,16 +387,19 @@ def test_deactivated_member_disappears_then_reappears_with_show_inactive(tmp_pat
     at.run()
 
     # deactivated, and the filter is off by default -> not in the list, no
-    # way to reach the Reactivate button
+    # way to reach it
     assert not any("Casey" in el.value for el in at.markdown)
     with pytest.raises(KeyError):
-        at.button(key=f"toggle_active_{member_id}")
+        at.button(key=f"view_button_{member_id}")
 
     at.checkbox(key="member_show_inactive").set_value(True).run()
 
     assert any("Casey" in el.value for el in at.markdown)
-    reactivate_button = at.button(key=f"toggle_active_{member_id}")
-    assert reactivate_button.label == "Reactivate"
+    at.button(key=f"view_button_{member_id}").click().run()
+
+    assert any("Inactive" in el.value for el in at.markdown)
+    reactivate_button = at.button(key=f"toggle_active_view_{member_id}")
+    assert reactivate_button.label == "Reactivate Member"
 
     reactivate_button.click().run()
     assert not at.exception
@@ -436,3 +440,120 @@ def test_duplicate_mobile_shows_warning_but_still_allows_saving(tmp_path, monkey
 
     assert not at.exception
     assert "saved" in at.success[0].value.lower()
+
+
+def test_view_screen_shows_contact_info_and_payment_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test15.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos15"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(
+        conn, {"first_name": "Riley", "surname": "Fox", "mobile": "9000000555", "email": "riley@example.com", "plan_id": plan_id}
+    )
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payments_service.mark_paid(conn, member_id, plan_id, admin_id)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"view_button_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("Riley Fox" in el.value for el in at.subheader)
+    assert any("riley@example.com" in el.value for el in at.markdown)
+    assert any("Monthly" in el.value for el in at.markdown)
+    # a paid, active member shouldn't be offered a reminder button
+    with pytest.raises(KeyError):
+        at.button(key=f"log_reminder_{member_id}")
+    assert at.button(key=f"edit_from_view_{member_id}")
+    assert at.button(key=f"toggle_active_view_{member_id}")
+
+
+def test_edit_from_view_returns_to_view_not_list(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test16.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos16"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"view_button_{member_id}").click().run()
+    at.button(key=f"edit_from_view_{member_id}").click().run()
+
+    assert not at.exception
+    assert at.text_input(key=f"edit_{member_id}_first_name").value == "Riley"
+
+    at.text_input(key=f"edit_{member_id}_occupation").input("Engineer").run()
+    at.button(key=f"save_edit_{member_id}").click().run()
+
+    assert not at.exception
+    assert "updated" in at.success[0].value.lower()
+    # back on View (not the list): the View screen's own buttons are there,
+    # the edit form's fields are gone, and the list's search box is gone
+    assert at.button(key=f"edit_from_view_{member_id}")
+    with pytest.raises(KeyError):
+        at.text_input(key=f"edit_{member_id}_first_name")
+    with pytest.raises(KeyError):
+        at.text_input(key="member_search_query")
+
+
+def test_reminder_log_button_appears_for_unpaid_member_and_logs(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test17.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos17"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"view_button_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("No reminders logged yet" in el.value for el in at.markdown)
+
+    at.button(key=f"log_reminder_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("Sent by Administrator" in el.value for el in at.markdown)
+    # the member is still unpaid, so the button to log another reminder
+    # must still be offered (not hidden after the first one)
+    assert at.button(key=f"log_reminder_{member_id}")
