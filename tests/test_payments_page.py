@@ -69,7 +69,7 @@ def test_status_list_shows_last_paid_date(tmp_path, monkeypatch):
 
     assert not at.exception
     assert any("**Last Paid**" == el.value for el in at.markdown)
-    assert any(el.value == paid_on.isoformat() for el in at.markdown)
+    assert any(el.value == paid_on.strftime("%d-%b-%Y") for el in at.markdown)
 
 
 def test_status_list_displays_members_own_plan_as_text_not_selectbox(tmp_path, monkeypatch):

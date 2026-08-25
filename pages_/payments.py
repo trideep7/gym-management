@@ -2,6 +2,7 @@ import streamlit as st
 
 import db
 from services import payments as payments_service
+from utils.dates import format_date
 from utils.errors import safe_action
 
 conn = db.get_connection()
@@ -81,8 +82,8 @@ with tab_status:
         member_plan_id = entry.get("plan_id")
         row[3].write(plan_names.get(member_plan_id, "No plan assigned"))
         last_payment = entry.get("last_payment")
-        row[4].write(last_payment["paid_on"] if last_payment else "—")
-        row[5].write(entry["valid_until"] or "—")
+        row[4].write(format_date(last_payment["paid_on"] if last_payment else None))
+        row[5].write(format_date(entry["valid_until"]))
         if row[6].button("Mark Paid", key=f"mark_paid_{entry['id']}", disabled=member_plan_id is None):
             ok, _ = safe_action(lambda: payments_service.mark_paid(conn, entry["id"], member_plan_id, user["id"]))
             if ok:

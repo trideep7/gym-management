@@ -6,14 +6,17 @@ import streamlit as st
 
 import db
 from services import reports as reports_service
+from utils.dates import format_date
 
 conn = db.get_connection()
 
 st.title("Reports")
 
 today = datetime.date.today()
-start_date = st.date_input("From", value=today - datetime.timedelta(days=6), key="report_start")
-end_date = st.date_input("To", value=today, key="report_end")
+start_date = st.date_input(
+    "From", value=today - datetime.timedelta(days=6), key="report_start", format="DD-MM-YYYY"
+)
+end_date = st.date_input("To", value=today, key="report_end", format="DD-MM-YYYY")
 
 if st.button("Generate"):
     if start_date > end_date:
@@ -31,11 +34,17 @@ else:
     counts = reports_service.signin_counts(conn, range_start.isoformat(), range_end.isoformat())
     if counts:
         chart_df = pd.DataFrame(counts)
+        chart_df["date"] = chart_df["date"].apply(format_date)
+        # counts is already chronologically ordered day-by-day; pin the axis
+        # to that row order explicitly, since Altair would otherwise sort
+        # these "dd-Mon-yyyy" strings alphabetically (wrong across a month
+        # boundary — e.g. "01-Sep-2026" would sort before "28-Aug-2026").
+        date_order = list(chart_df["date"])
         bar_size = min(40, max(8, 300 // len(chart_df)))
         chart = (
             alt.Chart(chart_df)
             .mark_bar(size=bar_size)
-            .encode(x=alt.X("date:O", title="Date"), y=alt.Y("count:Q", title="Sign-ins"))
+            .encode(x=alt.X("date:O", title="Date", sort=date_order), y=alt.Y("count:Q", title="Sign-ins"))
         )
         st.altair_chart(chart, use_container_width=True)
     else:

@@ -69,6 +69,7 @@ def member_form(key_prefix, existing=None):
         value=datetime.date.fromisoformat(dob_value) if dob_value else None,
         min_value=datetime.date(1920, 1, 1),
         key=f"{key_prefix}_dob",
+        format="DD-MM-YYYY",
     )
     gender_index = GENDERS.index(existing["gender"]) if existing.get("gender") in GENDERS else 0
     data["gender"] = col9.selectbox("Gender", GENDERS, index=gender_index, key=f"{key_prefix}_gender")
