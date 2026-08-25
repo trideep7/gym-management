@@ -5,7 +5,7 @@ from services import attendance, auth, members, payments
 
 def setup_member_and_user(conn, name="Sam"):
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members.create_member(conn, {"first_name": name, "mobile": "111", "plan_id": plan_id})
+    member_id = members.create_member(conn, {"first_name": name, "mobile": "9000000111", "plan_id": plan_id})
     user_id = auth.create_user(conn, f"staff_{name}", "pw12345", "Staff One", "staff")
     return member_id, user_id
 

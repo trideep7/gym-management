@@ -19,7 +19,7 @@ def test_mark_payment_flow(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -52,8 +52,8 @@ def test_status_list_shows_last_paid_date(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    paid_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "555", "plan_id": plan_id})
-    unpaid_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "556", "plan_id": plan_id})
+    paid_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    unpaid_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000556", "plan_id": plan_id})
     admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
     paid_on = datetime.date.today() - datetime.timedelta(days=5)
     payments_service.mark_paid(conn, paid_id, plan_id, admin_id, paid_on=paid_on)
@@ -85,7 +85,7 @@ def test_status_list_displays_members_own_plan_as_text_not_selectbox(tmp_path, m
     payments_service.create_plan(conn, "6 Months", 5000.0, 180)
     monthly_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
     member_id = members_service.create_member(
-        conn, {"first_name": "Sam", "mobile": "111", "plan_id": monthly_id}
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": monthly_id}
     )
     conn.close()
 
@@ -118,7 +118,7 @@ def test_mark_paid_disabled_when_member_has_no_plan(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     # simulate a legacy member with no plan assigned (pre-migration state)
     conn.execute("UPDATE members SET plan_id = NULL WHERE id = ?", (member_id,))
     conn.commit()
@@ -194,7 +194,7 @@ def test_delete_plan_assigned_to_member_deactivates_instead(tmp_path, monkeypatc
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Trial", 0.0, 7)
-    members_service.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -226,7 +226,7 @@ def test_delete_plan_in_use_deactivates_instead(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
     payments_service.mark_paid(conn, member_id, plan_id, admin_id)
     conn.close()
@@ -260,7 +260,7 @@ def test_mark_paid_failure_shows_friendly_message_not_traceback(tmp_path, monkey
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "555", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000555", "plan_id": plan_id})
     conn.close()
 
     def boom(*args, **kwargs):

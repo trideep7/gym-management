@@ -18,7 +18,7 @@ def test_reports_page_renders_without_error(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
     attendance.sign_in(conn, member_id, user_id)
     conn.close()

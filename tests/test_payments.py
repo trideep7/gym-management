@@ -5,7 +5,7 @@ from services import auth, members, payments
 
 def setup_member_and_user(conn):
     plan_id = payments.create_plan(conn, "Signup Default", 0.0, 30)
-    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
     return member_id, user_id
 
@@ -37,7 +37,7 @@ def test_status_is_overdue_after_plan_expires(conn):
 def test_list_members_with_status_filters(conn):
     paid_id, user_id = setup_member_and_user(conn)
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
-    unpaid_id = members.create_member(conn, {"first_name": "Riley", "mobile": "222", "plan_id": plan_id})
+    unpaid_id = members.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
     payments.mark_paid(conn, paid_id, plan_id, user_id)
 
     paid_entries = payments.list_members_with_status(conn, "paid")
@@ -75,7 +75,7 @@ def test_delete_plan_removes_unused_plan_completely(conn):
 
 def test_delete_plan_deactivates_plan_assigned_to_member_with_no_payments(conn):
     plan_id = payments.create_plan(conn, "Trial", 0.0, 7)
-    members.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
 
     result = payments.delete_plan(conn, plan_id)
 

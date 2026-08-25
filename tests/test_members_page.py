@@ -97,7 +97,7 @@ def test_search_finds_added_member(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    members_service.create_member(conn, {"first_name": "Riley", "mobile": "555", "plan_id": plan_id})
+    members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -124,7 +124,7 @@ def test_search_results_show_no_inline_edit_fields(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "555", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -155,7 +155,7 @@ def test_edit_member_flow(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "555", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -198,7 +198,7 @@ def test_list_shows_header_row_and_separate_name_phone_columns(tmp_path, monkeyp
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    members_service.create_member(conn, {"first_name": "Riley", "surname": "Fox", "mobile": "5551234", "plan_id": plan_id})
+    members_service.create_member(conn, {"first_name": "Riley", "surname": "Fox", "mobile": "9000005551", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -216,8 +216,8 @@ def test_list_shows_header_row_and_separate_name_phone_columns(tmp_path, monkeyp
     assert "**Payment**" in markdown_values
     # name and phone must render as separate elements, not "Name — mobile" combined
     assert any(el.value == "Riley Fox" for el in at.markdown)
-    assert any(el.value == "5551234" for el in at.markdown)
-    assert not any("Riley Fox — 5551234" in el.value for el in at.markdown)
+    assert any(el.value == "9000005551" for el in at.markdown)
+    assert not any("Riley Fox — 9000005551" in el.value for el in at.markdown)
 
 
 def test_list_shows_payment_status_badge(tmp_path, monkeypatch):
@@ -231,8 +231,8 @@ def test_list_shows_payment_status_badge(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    paid_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "555", "plan_id": plan_id})
-    unpaid_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "556", "plan_id": plan_id})
+    paid_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    unpaid_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000556", "plan_id": plan_id})
     admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
     payments_service.mark_paid(conn, paid_id, plan_id, admin_id)
     conn.close()
@@ -340,7 +340,7 @@ def test_toggle_active_failure_shows_friendly_message_not_traceback(tmp_path, mo
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "333", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000333", "plan_id": plan_id})
     conn.close()
 
     def boom(*args, **kwargs):
@@ -373,7 +373,7 @@ def test_deactivated_member_disappears_then_reappears_with_show_inactive(tmp_pat
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Casey", "mobile": "444", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Casey", "mobile": "9000000444", "plan_id": plan_id})
     members_service.set_member_active(conn, member_id, False)
     conn.close()
 
@@ -415,7 +415,7 @@ def test_duplicate_mobile_shows_warning_but_still_allows_saving(tmp_path, monkey
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    members_service.create_member(conn, {"first_name": "Riley", "mobile": "999", "plan_id": plan_id})
+    members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000999", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -428,7 +428,7 @@ def test_duplicate_mobile_shows_warning_but_still_allows_saving(tmp_path, monkey
 
     at.button(key="show_add_member_button").click().run()
     at.text_input(key="add_first_name").input("Jordan").run()
-    at.text_input(key="add_mobile").input("999").run()
+    at.text_input(key="add_mobile").input("9000000999").run()
 
     assert any("already use this mobile number" in el.value.lower() for el in at.warning)
 

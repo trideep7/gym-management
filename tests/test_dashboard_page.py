@@ -16,7 +16,7 @@ def test_dashboard_shows_metrics(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    members_service.create_member(conn, {"first_name": "Sam", "mobile": "111", "plan_id": plan_id})
+    members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -41,7 +41,7 @@ def test_dashboard_shows_todays_signins(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members.create_member(conn, {"first_name": "Riley", "mobile": "222", "plan_id": plan_id})
+    member_id = members.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
     user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
     attendance.sign_in(conn, member_id, user_id)
     conn.close()
@@ -67,7 +67,7 @@ def test_dashboard_signin_and_duplicate_same_day(tmp_path, monkeypatch):
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "222", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -103,7 +103,7 @@ def test_signin_failure_shows_friendly_message_not_traceback(tmp_path, monkeypat
     db_module.init_db(conn)
     db_module.seed_admin(conn)
     plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
-    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "222", "plan_id": plan_id})
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
     conn.close()
 
     from services import attendance as attendance_service

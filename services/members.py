@@ -1,7 +1,9 @@
 import datetime
 import os
+import re
 
 REQUIRED_FIELDS = ("first_name", "mobile", "plan_id")
+MOBILE_PATTERN = re.compile(r"^[1-9]\d{9}$")
 
 BOOLEAN_COLUMNS = {
     "is_student", "med_heart_disease", "med_dizziness", "med_blackouts", "med_asthma",
@@ -25,6 +27,8 @@ def _validate(data):
     for field in REQUIRED_FIELDS:
         if not data.get(field):
             raise ValueError(f"{field} is required")
+    if not MOBILE_PATTERN.match(data["mobile"]):
+        raise ValueError("Mobile number must be exactly 10 digits and cannot start with 0")
 
 
 def _column_value(col, data):
