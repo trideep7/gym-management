@@ -23,8 +23,11 @@ def test_help_page_renders_all_sections(tmp_path, monkeypatch):
         "Signing In Members (Dashboard)",
         "Members — Add, Edit, View, Search",
         "Payments — Plans, Marking Paid, Reminders",
+        "Reminder Message Templates",
         "Equipment — Inventory",
         "Reports",
         "Common Issues",
     ]
     assert any("10 digits" in el.value for el in at.markdown)
+    assert any("Upcoming Renewal" in el.value for el in at.markdown)
+    assert any("Overdue Payment" in el.value for el in at.markdown)

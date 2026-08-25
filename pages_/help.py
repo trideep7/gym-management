@@ -67,6 +67,32 @@ with st.expander("Payments — Plans, Marking Paid, Reminders"):
         """
     )
 
+with st.expander("Reminder Message Templates"):
+    st.markdown(
+        """
+Copy-paste templates for contacting members. Fill in `[Name]`, `[Plan]`,
+and `[Due Date]` — you'll find these on the Payments page's *Member
+Status* tab (the **Due Date** column).
+
+**Upcoming Renewal**
+```
+Hi [Name], just a reminder that your [Plan] membership at Fitness Tribe
+is due for renewal on [Due Date]. Let us know if you'd like to continue
+— see you at the gym!
+```
+
+**Overdue Payment**
+```
+Hi [Name], your [Plan] membership at Fitness Tribe expired on [Due Date]
+and is now overdue. Please renew at your earliest convenience to keep
+your membership active. Let us know if you have any questions!
+```
+
+After sending either message, click **Log Reminder** on the Payments
+page or the member's View screen so there's a record of it.
+        """
+    )
+
 with st.expander("Equipment — Inventory"):
     st.markdown(
         """
