@@ -82,6 +82,7 @@ else:
         st.Page("pages_/payments.py", title="Payments", icon="💳"),
         st.Page("pages_/equipment.py", title="Equipment", icon="🏋️"),
         st.Page("pages_/reports.py", title="Reports", icon="📊"),
+        st.Page("pages_/help.py", title="Help", icon="❓"),
     ]
     if st.session_state.user["role"] == "admin":
         pages.append(st.Page("pages_/users.py", title="Users", icon="🔑"))
