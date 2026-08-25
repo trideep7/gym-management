@@ -94,11 +94,15 @@ def list_members_with_status(conn, status_filter=None):
     return result
 
 
-def payment_history(conn, member_id):
-    rows = conn.execute(
+def payment_history(conn, member_id, limit=None):
+    sql = (
         "SELECT payments.*, membership_plans.name AS plan_name FROM payments "
         "JOIN membership_plans ON payments.plan_id = membership_plans.id "
-        "WHERE member_id = ? ORDER BY paid_on DESC",
-        (member_id,),
-    ).fetchall()
+        "WHERE member_id = ? ORDER BY paid_on DESC"
+    )
+    params = [member_id]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]

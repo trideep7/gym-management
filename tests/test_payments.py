@@ -99,3 +99,19 @@ def test_delete_plan_deactivates_plan_with_payment_history(conn):
     # payment history must still resolve the plan name, i.e. the row survives
     history = payments.payment_history(conn, member_id)
     assert history[0]["plan_name"] == "Monthly"
+
+
+def test_payment_history_respects_limit(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    base = datetime.date(2026, 1, 1)
+    for i in range(8):
+        payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=base + datetime.timedelta(days=i * 30))
+
+    history = payments.payment_history(conn, member_id, limit=6)
+
+    assert len(history) == 6
+    # newest first — the 8th payment (i=7) was paid latest
+    assert history[0]["paid_on"] == (base + datetime.timedelta(days=7 * 30)).isoformat()
+    assert history[5]["paid_on"] == (base + datetime.timedelta(days=2 * 30)).isoformat()
