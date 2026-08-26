@@ -1,5 +1,8 @@
 import datetime
 
+from services import members as members_service
+from services import payments as payments_service
+
 PT_TRAINER_SHARE = 2000  # of payments.PT_MONTHLY_FEE (3000) per month; the rest is the gym's share
 
 
@@ -46,3 +49,39 @@ def delete_trainer(conn, trainer_id):
     conn.execute("DELETE FROM trainers WHERE id = ?", (trainer_id,))
     conn.commit()
     return "deleted"
+
+
+def _resolve_paid_on(paid_on):
+    if paid_on is None:
+        return datetime.date.today().isoformat()
+    if isinstance(paid_on, str):
+        return paid_on
+    return paid_on.isoformat()
+
+
+def record_trainer_payment(conn, member_id, trainer_id, amount, trainer_share, recorded_by, paid_on=None):
+    paid_on_str = _resolve_paid_on(paid_on)
+    cursor = conn.execute(
+        "INSERT INTO trainer_payments (member_id, trainer_id, amount, trainer_share, paid_on, recorded_by) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (member_id, trainer_id, amount, trainer_share, paid_on_str, recorded_by),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def mark_paid_with_pt(conn, member_id, plan_id, recorded_by, paid_on=None):
+    paid_on_str = _resolve_paid_on(paid_on)
+    payment_id = payments_service.mark_paid(conn, member_id, plan_id, recorded_by, paid_on_str)
+
+    member = members_service.get_member(conn, member_id)
+    pt_charged = False
+    if member and member["has_pt"] and member["trainer_id"]:
+        plan = conn.execute("SELECT duration_days FROM membership_plans WHERE id = ?", (plan_id,)).fetchone()
+        months = plan["duration_days"] / 30
+        amount = payments_service.PT_MONTHLY_FEE * months
+        trainer_share = PT_TRAINER_SHARE * months
+        record_trainer_payment(conn, member_id, member["trainer_id"], amount, trainer_share, recorded_by, paid_on_str)
+        pt_charged = True
+
+    return {"payment_id": payment_id, "pt_charged": pt_charged}

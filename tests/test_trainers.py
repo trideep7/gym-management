@@ -1,4 +1,17 @@
-from services import members, payments, trainers
+import datetime
+
+from services import auth, members, payments, trainers
+
+
+def setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    trainer_id = trainers.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    data = {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_pt": has_pt}
+    if assign_trainer:
+        data["trainer_id"] = trainer_id
+    member_id = members.create_member(conn, data)
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    return member_id, trainer_id, plan_id, user_id
 
 
 def test_create_and_list_trainers(conn):
@@ -62,10 +75,92 @@ def test_delete_trainer_deactivates_trainer_with_payment_history(conn):
     trainer_id = trainers.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
     plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
     member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
-    from services import auth
     user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
     trainers.record_trainer_payment(conn, member_id, trainer_id, 3000, 2000, user_id)
 
     result = trainers.delete_trainer(conn, trainer_id)
 
     assert result == "deactivated"
+
+
+def test_record_trainer_payment_persists_given_amounts(conn):
+    member_id, trainer_id, _, user_id = setup_member_trainer_and_user(conn)
+
+    trainer_payment_id = trainers.record_trainer_payment(
+        conn, member_id, trainer_id, 3000, 2000, user_id, paid_on=datetime.date(2026, 8, 1)
+    )
+
+    row = conn.execute("SELECT * FROM trainer_payments WHERE id = ?", (trainer_payment_id,)).fetchone()
+    assert row["amount"] == 3000
+    assert row["trainer_share"] == 2000
+    assert row["paid_on"] == "2026-08-01"
+    assert row["member_id"] == member_id
+    assert row["trainer_id"] == trainer_id
+
+
+def test_mark_paid_with_pt_logs_payout_when_has_pt_and_trainer_assigned(conn):
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
+
+    result = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 1))
+
+    assert result["pt_charged"] is True
+    payment_count = conn.execute("SELECT COUNT(*) AS c FROM payments WHERE member_id = ?", (member_id,)).fetchone()["c"]
+    assert payment_count == 1
+    tp = conn.execute("SELECT * FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()
+    assert tp["amount"] == 3000
+    assert tp["trainer_share"] == 2000
+    assert tp["paid_on"] == "2026-08-01"
+    # the member's own payment already includes the PT surcharge via has_pt
+    payment = conn.execute("SELECT amount FROM payments WHERE member_id = ?", (member_id,)).fetchone()
+    assert payment["amount"] == 1000.0 + 3000
+
+
+def test_mark_paid_with_pt_scales_payout_by_plan_duration(conn):
+    trainer_id = trainers.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    plan_id = payments.create_plan(conn, "6 Months", 5000.0, 180)
+    member_id = members.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_pt": True, "trainer_id": trainer_id}
+    )
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+
+    trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id)
+
+    tp = conn.execute("SELECT * FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()
+    assert tp["amount"] == 3000 * 6
+    assert tp["trainer_share"] == 2000 * 6
+
+
+def test_mark_paid_with_pt_no_payout_without_has_pt(conn):
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=False, assign_trainer=True)
+
+    result = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id)
+
+    assert result["pt_charged"] is False
+    count = conn.execute("SELECT COUNT(*) AS c FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()["c"]
+    assert count == 0
+
+
+def test_mark_paid_with_pt_no_payout_without_trainer(conn):
+    member_id, _, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=False)
+
+    result = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id)
+
+    assert result["pt_charged"] is False
+    count = conn.execute("SELECT COUNT(*) AS c FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()["c"]
+    assert count == 0
+
+
+def test_mark_paid_with_pt_stops_logging_after_has_pt_turned_off(conn):
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
+
+    first = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 1))
+    assert first["pt_charged"] is True
+
+    member = members.get_member(conn, member_id)
+    members.update_member(conn, member_id, {**member, "has_pt": False})
+
+    second = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 9, 1))
+
+    assert second["pt_charged"] is False
+    count = conn.execute("SELECT COUNT(*) AS c FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()["c"]
+    assert count == 1  # only the first month's payout
