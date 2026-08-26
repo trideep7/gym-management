@@ -85,6 +85,7 @@ else:
         st.Page("pages_/dashboard.py", title="Dashboard", icon="🏠"),
         st.Page("pages_/members.py", title="Members", icon="👥"),
         st.Page("pages_/payments.py", title="Payments", icon="💳"),
+        st.Page("pages_/trainers.py", title="Trainers", icon="🧑‍🏫"),
         st.Page("pages_/equipment.py", title="Equipment", icon="🏋️"),
         st.Page("pages_/reports.py", title="Reports", icon="📊"),
         st.Page("pages_/help.py", title="Help", icon="❓"),
