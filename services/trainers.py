@@ -85,3 +85,32 @@ def mark_paid_with_pt(conn, member_id, plan_id, recorded_by, paid_on=None):
         pt_charged = True
 
     return {"payment_id": payment_id, "pt_charged": pt_charged}
+
+
+def trainer_payouts(conn, start_date, end_date):
+    rows = conn.execute(
+        "SELECT trainers.id AS trainer_id, trainers.name AS trainer_name, "
+        "COALESCE(SUM(trainer_payments.trainer_share), 0) AS amount_owed "
+        "FROM trainers "
+        "LEFT JOIN trainer_payments ON trainer_payments.trainer_id = trainers.id "
+        "  AND trainer_payments.paid_on >= ? AND trainer_payments.paid_on <= ? "
+        "WHERE trainers.is_active = 1 "
+        "GROUP BY trainers.id ORDER BY trainers.name",
+        (start_date, end_date),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pt_summary(conn, start_date, end_date):
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS total_fees, COALESCE(SUM(trainer_share), 0) AS total_trainer_share "
+        "FROM trainer_payments WHERE paid_on >= ? AND paid_on <= ?",
+        (start_date, end_date),
+    ).fetchone()
+    total_fees = row["total_fees"]
+    total_trainer_share = row["total_trainer_share"]
+    return {
+        "total_fees": total_fees,
+        "total_trainer_share": total_trainer_share,
+        "total_gym_share": total_fees - total_trainer_share,
+    }

@@ -164,3 +164,34 @@ def test_mark_paid_with_pt_stops_logging_after_has_pt_turned_off(conn):
     assert second["pt_charged"] is False
     count = conn.execute("SELECT COUNT(*) AS c FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()["c"]
     assert count == 1  # only the first month's payout
+
+
+def test_trainer_payouts_sums_per_trainer_in_range(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    alex_id = trainers.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    trainers.create_trainer(conn, "Priya", "9000000002", "4-6 PM")
+    member_a = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "trainer_id": alex_id})
+    member_b = members.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id, "trainer_id": alex_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+
+    trainers.record_trainer_payment(conn, member_a, alex_id, 3000, 2000, user_id, paid_on=datetime.date(2026, 8, 5))
+    trainers.record_trainer_payment(conn, member_b, alex_id, 3000, 2000, user_id, paid_on=datetime.date(2026, 8, 10))
+    trainers.record_trainer_payment(conn, member_a, alex_id, 3000, 2000, user_id, paid_on=datetime.date(2026, 7, 1))  # out of range
+
+    payouts = trainers.trainer_payouts(conn, "2026-08-01", "2026-08-31")
+
+    by_name = {p["trainer_name"]: p["amount_owed"] for p in payouts}
+    assert by_name["Alex"] == 4000
+    assert by_name["Priya"] == 0
+
+
+def test_pt_summary_totals_across_all_trainers(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    trainer_id = trainers.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "trainer_id": trainer_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    trainers.record_trainer_payment(conn, member_id, trainer_id, 3000, 2000, user_id, paid_on=datetime.date(2026, 8, 5))
+
+    summary = trainers.pt_summary(conn, "2026-08-01", "2026-08-31")
+
+    assert summary == {"total_fees": 3000, "total_trainer_share": 2000, "total_gym_share": 1000}

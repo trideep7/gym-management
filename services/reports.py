@@ -1,6 +1,6 @@
 import datetime
 
-from services import attendance, payments
+from services import attendance, payments, trainers
 
 
 def signin_counts(conn, start_date, end_date):
@@ -36,3 +36,72 @@ def payment_summary(conn):
 
 def most_active_members(conn, start_date, end_date, limit=10):
     return attendance.most_active(conn, start_date, end_date, limit)
+
+
+def due_summary(conn):
+    return payments.due_amounts(conn)
+
+
+def daily_revenue(conn, start_date, end_date):
+    totals_by_date = {row["date"]: row["total"] for row in payments.revenue_by_day(conn, start_date, end_date)}
+    start = datetime.date.fromisoformat(start_date)
+    end = datetime.date.fromisoformat(end_date)
+    result = []
+    day = start
+    while day <= end:
+        date_str = day.isoformat()
+        result.append({"date": date_str, "total": totals_by_date.get(date_str, 0)})
+        day += datetime.timedelta(days=1)
+    return result
+
+
+def _months_before_start(today, months_back):
+    year = today.year
+    month = today.month - months_back
+    while month <= 0:
+        month += 12
+        year -= 1
+    return datetime.date(year, month, 1)
+
+
+def _month_keys(start, end):
+    year, month = start.year, start.month
+    keys = []
+    while (year, month) <= (end.year, end.month):
+        keys.append(f"{year:04d}-{month:02d}")
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return keys
+
+
+def monthly_revenue_trend(conn, today=None, months=12):
+    today = today or datetime.date.today()
+    start = _months_before_start(today, months - 1)
+    totals_by_month = {row["month"]: row["total"] for row in payments.revenue_by_month(conn, start.isoformat(), today.isoformat())}
+    return [{"month": key, "total": totals_by_month.get(key, 0)} for key in _month_keys(start, today)]
+
+
+def overview_stats(conn, today=None):
+    today = today or datetime.date.today()
+    month_start = today.replace(day=1).isoformat()
+    year_start = today.replace(month=1, day=1).isoformat()
+    three_months_ago = (today - datetime.timedelta(days=90)).isoformat()
+    due = due_summary(conn)
+    return {
+        "revenue_this_month": payments.revenue_since(conn, month_start),
+        "revenue_this_year": payments.revenue_since(conn, year_start),
+        "active_members": attendance.active_since_count(conn, three_months_ago),
+        "payments_overdue": payment_summary(conn)["overdue"],
+        "due_active": due["active"],
+        "due_inactive": due["inactive"],
+    }
+
+
+def pt_summary(conn, start_date, end_date):
+    return trainers.pt_summary(conn, start_date, end_date)
+
+
+def trainer_payouts(conn, start_date, end_date):
+    return trainers.trainer_payouts(conn, start_date, end_date)
