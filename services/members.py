@@ -2,13 +2,13 @@ import datetime
 import os
 import re
 
-REQUIRED_FIELDS = ("first_name", "mobile", "plan_id")
+REQUIRED_FIELDS = ("first_name", "plan_id")
 MOBILE_PATTERN = re.compile(r"^[1-9]\d{9}$")
 
 BOOLEAN_COLUMNS = {
     "is_student", "med_heart_disease", "med_dizziness", "med_blackouts", "med_asthma",
     "med_high_low_bp", "med_diabetes", "med_gout", "injury_knees", "injury_lower_back",
-    "injury_neck_shoulder", "injury_hips_pelvic",
+    "injury_neck_shoulder", "injury_hips_pelvic", "has_locker", "has_pt",
 }
 
 COLUMNS = [
@@ -19,7 +19,7 @@ COLUMNS = [
     "med_high_low_bp", "med_diabetes", "med_gout", "med_other_condition",
     "injury_knees", "injury_lower_back", "injury_neck_shoulder",
     "injury_hips_pelvic", "injury_other", "surgery_details",
-    "medication_details", "additional_notes", "plan_id",
+    "medication_details", "additional_notes", "plan_id", "has_locker", "has_pt", "trainer_id",
 ]
 
 
@@ -27,7 +27,7 @@ def _validate(data):
     for field in REQUIRED_FIELDS:
         if not data.get(field):
             raise ValueError(f"{field} is required")
-    if not MOBILE_PATTERN.match(data["mobile"]):
+    if data.get("mobile") and not MOBILE_PATTERN.match(data["mobile"]):
         raise ValueError("Mobile number must be exactly 10 digits and cannot start with 0")
 
 

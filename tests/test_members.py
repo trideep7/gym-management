@@ -21,10 +21,10 @@ def test_create_member_requires_first_name(conn):
         members.create_member(conn, {"mobile": "12345", "plan_id": plan_id})
 
 
-def test_create_member_requires_mobile(conn):
+def test_create_member_allows_missing_mobile(conn):
     plan_id = make_plan(conn)
-    with pytest.raises(ValueError):
-        members.create_member(conn, {"first_name": "Jamie", "plan_id": plan_id})
+    member_id = members.create_member(conn, {"first_name": "Jamie", "plan_id": plan_id})
+    assert members.get_member(conn, member_id)["mobile"] is None
 
 
 def test_create_member_requires_plan_id(conn):
@@ -70,6 +70,22 @@ def test_create_and_get_member_roundtrip(conn):
     assert fetched["mobile"] == "9876543210"
     assert fetched["is_active"] == 1
     assert fetched["plan_id"] == plan_id
+
+
+def test_create_member_defaults_locker_and_pt_to_false(conn):
+    plan_id = make_plan(conn)
+    member_id = members.create_member(conn, make_data(conn, plan_id=plan_id))
+    fetched = members.get_member(conn, member_id)
+    assert fetched["has_locker"] == 0
+    assert fetched["has_pt"] == 0
+
+
+def test_create_member_persists_locker_and_pt_flags(conn):
+    plan_id = make_plan(conn)
+    member_id = members.create_member(conn, make_data(conn, plan_id=plan_id, has_locker=True, has_pt=True))
+    fetched = members.get_member(conn, member_id)
+    assert fetched["has_locker"] == 1
+    assert fetched["has_pt"] == 1
 
 
 def test_update_member_changes_fields(conn):
@@ -131,3 +147,32 @@ def test_save_photo_accepts_extension_with_leading_dot_and_mixed_case(tmp_path):
     filename = members.save_photo(b"fake-bytes", member_id=7, ext=".PNG", photos_dir=str(tmp_path))
     assert filename == "member_7.png"
     assert os.path.exists(os.path.join(str(tmp_path), "member_7.png"))
+
+
+def make_trainer(conn, name="Alex"):
+    # services/trainers.py doesn't exist until a later task in this plan,
+    # so insert directly rather than depending on it here.
+    cursor = conn.execute(
+        "INSERT INTO trainers (name, mobile, time_slot, is_active, created_at) VALUES (?, ?, ?, 1, ?)",
+        (name, "9000000001", "6-8 AM", "2026-01-01T00:00:00"),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def test_trainer_id_round_trips_through_create_and_update(conn):
+    trainer_id = make_trainer(conn)
+
+    member_id = members.create_member(conn, make_data(conn, trainer_id=trainer_id))
+    fetched = members.get_member(conn, member_id)
+    assert fetched["trainer_id"] == trainer_id
+
+    members.update_member(conn, member_id, {**fetched, "trainer_id": None})
+    updated = members.get_member(conn, member_id)
+    assert updated["trainer_id"] is None
+
+
+def test_trainer_id_defaults_to_null_when_omitted(conn):
+    member_id = members.create_member(conn, make_data(conn))
+    fetched = members.get_member(conn, member_id)
+    assert fetched["trainer_id"] is None
