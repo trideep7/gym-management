@@ -3,6 +3,7 @@ import streamlit as st
 import db
 from services import payments as payments_service
 from services import reminders as reminders_service
+from services import trainers as trainers_service
 from utils.dates import format_date
 from utils.errors import safe_action
 
@@ -89,6 +90,7 @@ with tab_status:
     # include inactive plans here too — a member can still be assigned to a
     # plan that's since been deactivated, and we need its name to display it
     plan_names = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
+    trainer_names = {t["id"]: t["name"] for t in trainers_service.list_trainers(conn, active_only=False)}
 
     if entries:
         header = st.columns([2, 2, 2, 2, 2, 2, 1, 2])
@@ -107,14 +109,26 @@ with tab_status:
         row[1].write(entry["mobile"])
         row[2].write(entry["status"].replace("_", " ").title())
         member_plan_id = entry.get("plan_id")
-        row[3].write(plan_names.get(member_plan_id, "No plan assigned"))
+        if member_plan_id is not None:
+            quoted_amount = payments_service.quote_amount(conn, entry["id"], member_plan_id)
+            plan_label = f"{plan_names.get(member_plan_id, '—')} (₹{quoted_amount:.2f})"
+            if entry.get("has_pt") and entry.get("trainer_id"):
+                plan_label += f" + PT ({trainer_names.get(entry['trainer_id'], '—')})"
+            row[3].write(plan_label)
+        else:
+            row[3].write("No plan assigned")
         last_payment = entry.get("last_payment")
         row[4].write(format_date(last_payment["paid_on"] if last_payment else None))
         row[5].write(format_date(entry["valid_until"]))
         if row[6].button("Mark Paid", key=f"mark_paid_{entry['id']}", disabled=member_plan_id is None):
-            ok, _ = safe_action(lambda: payments_service.mark_paid(conn, entry["id"], member_plan_id, user["id"]))
+            ok, result = safe_action(
+                lambda: trainers_service.mark_paid_with_pt(conn, entry["id"], member_plan_id, user["id"])
+            )
             if ok:
-                st.session_state.payment_flash = f"Marked {entry['first_name']} as paid."
+                if result["pt_charged"]:
+                    st.session_state.payment_flash = f"Marked {entry['first_name']} as paid (incl. Personal Training)."
+                else:
+                    st.session_state.payment_flash = f"Marked {entry['first_name']} as paid."
                 st.rerun()
         if entry["status"] != "paid":
             last = reminders_service.last_reminder(conn, entry["id"])

@@ -101,7 +101,7 @@ def test_status_list_displays_members_own_plan_as_text_not_selectbox(tmp_path, m
     # plan is now plain text, not a selectbox — nothing to choose here
     with pytest.raises(KeyError):
         at.selectbox(key=f"plan_select_{member_id}")
-    assert any(el.value == "Monthly" for el in at.markdown)
+    assert any(el.value == "Monthly (₹1500.00)" for el in at.markdown)
     # header row present
     assert any("**Plan**" == el.value for el in at.markdown)
     assert any("**Mark Paid**" == el.value for el in at.markdown)
@@ -212,7 +212,7 @@ def test_delete_plan_assigned_to_member_deactivates_instead(tmp_path, monkeypatc
     assert "Trial" in at.success[0].value
     # gone from the Manage Plans list, but still correctly shown as Sam's
     # assigned plan in the Member Status list — exactly one mention left
-    assert sum(1 for el in at.markdown if el.value == "Trial") == 1
+    assert sum(1 for el in at.markdown if el.value == "Trial (₹0.00)") == 1
 
 
 def test_delete_plan_in_use_deactivates_instead(tmp_path, monkeypatch):
@@ -246,7 +246,7 @@ def test_delete_plan_in_use_deactivates_instead(tmp_path, monkeypatch):
     assert "Monthly" in at.success[0].value
     # gone from the Manage Plans list, but still correctly shown as Sam's
     # assigned plan in the Member Status list — exactly one mention left
-    assert sum(1 for el in at.markdown if el.value == "Monthly") == 1
+    assert sum(1 for el in at.markdown if el.value == "Monthly (₹1500.00)") == 1
 
 
 def test_mark_paid_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
@@ -390,3 +390,74 @@ def test_upcoming_expirations_section_orders_soonest_first_and_logs_reminder(tmp
 
     assert not at.exception
     assert "Remind Again" in at.button(key=f"expiry_reminder_{expires_today_id}").label
+
+
+def test_mark_paid_logs_payout_when_has_pt_and_trainer_assigned(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test14.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos14"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+    from services import trainers as trainers_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    trainer_id = trainers_service.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    member_id = members_service.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_pt": True, "trainer_id": trainer_id}
+    )
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/payments.py")
+    at.run()
+
+    at.button(key=f"mark_paid_{member_id}").click().run()
+
+    assert not at.exception
+    assert any("Personal Training" in el.value for el in at.success)
+    assert any("+ PT (Alex)" in el.value for el in at.markdown)
+
+    conn2 = db_module.get_connection(str(tmp_path / "test14.db"))
+    tp_count = conn2.execute(
+        "SELECT COUNT(*) AS c FROM trainer_payments WHERE member_id = ?", (member_id,)
+    ).fetchone()["c"]
+    assert tp_count == 1
+    payment_amount = conn2.execute("SELECT amount FROM payments WHERE member_id = ?", (member_id,)).fetchone()["amount"]
+    assert payment_amount == 1000.0 + 3000
+    conn2.close()
+
+
+def test_mark_paid_without_pt_behaves_as_before(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test15.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos15"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000112", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/payments.py")
+    at.run()
+
+    at.button(key=f"mark_paid_{member_id}").click().run()
+
+    assert not at.exception
+    assert any(el.value == "Marked Sam as paid." for el in at.success)
+    assert not any("Personal Training" in el.value for el in at.success)
