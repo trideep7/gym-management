@@ -18,3 +18,14 @@ docs/
 .mcp.json
 .github/copilot-instructions.md
 WhatsApp Image*.jpeg
+
+# Legacy member data + the one-off scripts that imported it. The
+# spreadsheets hold real member PII (names, addresses, phone numbers) and
+# must never reach the public remote. The import scripts are throwaway
+# migration tooling, not part of the running app — their tests are
+# ignored alongside them since they import from scripts/.
+*.xlsx
+*.xls
+.~lock.*#
+scripts/
+tests/test_import_*.py
