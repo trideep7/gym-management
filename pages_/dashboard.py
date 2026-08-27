@@ -3,6 +3,7 @@ import datetime
 import streamlit as st
 
 import db
+import ui
 from services import attendance, members, payments
 from utils.dates import format_time
 from utils.errors import safe_action
@@ -96,6 +97,14 @@ query = col_search.text_input("Search member by name or mobile", key=search_key)
 col_button.button("Search", key="signin_search_button")
 results = members.search_members(conn, query) if query else []
 
+# an empty result used to render as silence, which reads the same as
+# "still searching" -- say which it is
+if query:
+    if results:
+        st.caption(f"{len(results)} member(s) found")
+    else:
+        st.info(f'No member found matching "{query}". Check the spelling, or try their mobile number.')
+
 for m in results:
     status = payments.get_status(conn, m["id"])
     if status["status"] == "paid":
@@ -136,13 +145,9 @@ for m in results:
 st.subheader("Today's Sign-Ins")
 if today_signins:
     SIGNINS_PAGE_SIZE = 10
-    if "signins_list_page" not in st.session_state:
-        st.session_state.signins_list_page = 1
-    total_signin_pages = max(1, -(-len(today_signins) // SIGNINS_PAGE_SIZE))
-    st.session_state.signins_list_page = min(max(st.session_state.signins_list_page, 1), total_signin_pages)
-    signins_page = st.session_state.signins_list_page
-    start = (signins_page - 1) * SIGNINS_PAGE_SIZE
-    page_signins = today_signins[start:start + SIGNINS_PAGE_SIZE]
+    page_signins, signins_page_controls = ui.paginate(
+        today_signins, SIGNINS_PAGE_SIZE, "signins_list_page"
+    )
 
     header = st.columns([3, 2, 2])
     header[0].markdown("**Name**")
@@ -154,14 +159,6 @@ if today_signins:
         row_cols[1].write(row["mobile"])
         row_cols[2].write(format_time(row["sign_in_time"]))
 
-    if total_signin_pages > 1:
-        col_prev, col_page, col_next = st.columns([1, 2, 1])
-        if col_prev.button("← Previous", key="signins_page_prev", disabled=signins_page <= 1):
-            st.session_state.signins_list_page -= 1
-            st.rerun()
-        col_page.write(f"Page {signins_page} of {total_signin_pages}")
-        if col_next.button("Next →", key="signins_page_next", disabled=signins_page >= total_signin_pages):
-            st.session_state.signins_list_page += 1
-            st.rerun()
+    signins_page_controls()
 else:
     st.write("No sign-ins yet today.")

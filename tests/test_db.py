@@ -366,3 +366,83 @@ def test_init_db_migrates_trainer_payments_with_not_null_trainer_id(tmp_path):
     assert upgraded_conn.execute(
         "SELECT COUNT(*) AS c FROM trainer_payments WHERE trainer_id IS NULL"
     ).fetchone()["c"] == 1
+
+
+def test_init_db_creates_settings_table(conn):
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(settings)")}
+    assert cols == {"key", "value"}
+
+
+def test_init_db_creates_period_start_column_on_payments(conn):
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(payments)")]
+    assert "period_start" in cols
+
+
+def test_init_db_backfills_period_start_on_existing_payments(tmp_path):
+    # a payment recorded before periods were tracked only knows valid_until,
+    # so the migration reconstructs the period it would have covered under
+    # the old paid_on + duration_days formula
+    db_path = str(tmp_path / "old_gym.db")
+    old_conn = db_module.get_connection(db_path)
+    old_conn.executescript(
+        """
+        CREATE TABLE membership_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            duration_days INTEGER NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER NOT NULL,
+            plan_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            paid_on TEXT NOT NULL,
+            valid_until TEXT NOT NULL,
+            recorded_by INTEGER NOT NULL
+        );
+        INSERT INTO membership_plans (id, name, amount, duration_days) VALUES (1, 'Monthly', 1500.0, 30);
+        INSERT INTO payments (member_id, plan_id, amount, paid_on, valid_until, recorded_by)
+            VALUES (1, 1, 1500.0, '2026-01-15', '2026-02-14', 1);
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    upgraded_conn = db_module.get_connection(db_path)
+    db_module.init_db(upgraded_conn)
+
+    row = upgraded_conn.execute("SELECT period_start, valid_until FROM payments").fetchone()
+    assert row["period_start"] == "2026-01-15"
+    assert row["valid_until"] == "2026-02-14"
+
+
+def test_init_db_leaves_period_start_null_when_plan_is_missing(tmp_path):
+    # a payment whose plan row was hard-deleted has no duration to work
+    # back from; the migration must not crash or invent a date
+    db_path = str(tmp_path / "orphan_gym.db")
+    old_conn = db_module.get_connection(db_path)
+    old_conn.executescript(
+        """
+        CREATE TABLE payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER NOT NULL,
+            plan_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            paid_on TEXT NOT NULL,
+            valid_until TEXT NOT NULL,
+            recorded_by INTEGER NOT NULL
+        );
+        INSERT INTO payments (member_id, plan_id, amount, paid_on, valid_until, recorded_by)
+            VALUES (1, 999, 1500.0, '2026-01-15', '2026-02-14', 1);
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    upgraded_conn = db_module.get_connection(db_path)
+    db_module.init_db(upgraded_conn)
+
+    row = upgraded_conn.execute("SELECT period_start FROM payments").fetchone()
+    assert row["period_start"] is None

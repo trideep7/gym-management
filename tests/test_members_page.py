@@ -284,7 +284,7 @@ def test_list_paginates_at_20_members_per_page(tmp_path, monkeypatch):
     edit_buttons = [b for b in at.button if b.key and b.key.startswith("view_button_")]
     assert len(edit_buttons) == 20
 
-    at.button(key="member_page_next").click().run()
+    at.button(key="member_list_page_next").click().run()
 
     assert not at.exception
     edit_buttons_page2 = [b for b in at.button if b.key and b.key.startswith("view_button_")]
@@ -318,7 +318,7 @@ def test_list_resets_to_page_1_when_search_changes(tmp_path, monkeypatch):
     at.switch_page("pages_/members.py")
     at.run()
 
-    at.button(key="member_page_next").click().run()
+    at.button(key="member_list_page_next").click().run()
     assert any("Page 2 of 2" in el.value for el in at.markdown)
 
     at.text_input(key="member_search_query").input("Unique").run()
@@ -326,7 +326,7 @@ def test_list_resets_to_page_1_when_search_changes(tmp_path, monkeypatch):
     assert not at.exception
     assert any("1 member" in el.value for el in at.markdown)
     with pytest.raises(KeyError):
-        at.button(key="member_page_next")
+        at.button(key="member_list_page_next")
 
 
 def test_toggle_active_failure_shows_friendly_message_not_traceback(tmp_path, monkeypatch):
@@ -472,8 +472,11 @@ def test_view_screen_shows_contact_info_and_payment_history(tmp_path, monkeypatc
 
     assert not at.exception
     assert any("Riley Fox" in el.value for el in at.subheader)
-    assert any("riley@example.com" in el.value for el in at.markdown)
+    assert any("9000000555" in el.value for el in at.markdown)
     assert any("Monthly" in el.value for el in at.markdown)
+    # email is stored but deliberately not shown on this screen
+    assert not any("riley@example.com" in el.value for el in at.markdown)
+    assert not any("Email" in el.value for el in at.markdown)
     # a paid, active member shouldn't be offered a reminder button
     with pytest.raises(KeyError):
         at.button(key=f"log_reminder_{member_id}")
@@ -708,3 +711,97 @@ def test_edit_form_shows_currently_assigned_trainer(tmp_path, monkeypatch):
 
     assert not at.exception
     assert at.selectbox(key=f"edit_{member_id}_trainer_id").value == trainer_id
+
+
+def test_add_member_form_shows_locker_availability(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_lockercap.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_lockercap"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+    from services import settings as settings_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    settings_service.set_locker_count(conn, 10)
+    for i in range(4):
+        members_service.create_member(
+            conn,
+            {"first_name": f"Holder{i}", "mobile": f"90000006{i:02d}",
+             "plan_id": plan_id, "has_locker": True},
+        )
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key="show_add_member_button").click().run()
+
+    assert not at.exception
+    assert any("4 of 10 lockers in use" in el.value for el in at.caption)
+
+
+def test_add_member_form_says_nothing_about_lockers_when_no_total_is_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_nolockercap.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_nolockercap"))
+    import db as db_module
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key="show_add_member_button").click().run()
+
+    assert not at.exception
+    assert not any("lockers in use" in el.value for el in at.caption)
+
+
+def test_saving_a_member_over_the_locker_limit_shows_a_friendly_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_lockerfull.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_lockerfull"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+    from services import settings as settings_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    settings_service.set_locker_count(conn, 1)
+    members_service.create_member(
+        conn, {"first_name": "Holder", "mobile": "9000000700", "plan_id": plan_id, "has_locker": True}
+    )
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key="show_add_member_button").click().run()
+
+    at.text_input(key="add_first_name").input("Asha").run()
+    at.checkbox(key="add_has_locker").check().run()
+    at.button(key="save_new_member").click().run()
+
+    assert not at.exception
+    assert any("lockers are in use" in el.value for el in at.error)

@@ -3,10 +3,12 @@ import datetime
 import streamlit as st
 
 import db
+import ui
 from services import attendance as attendance_service
 from services import members as members_service
 from services import payments as payments_service
 from services import reminders as reminders_service
+from services import settings as settings_service
 from services import trainers as trainers_service
 from utils.dates import format_date, format_time
 from utils.errors import report_unexpected_error, safe_action
@@ -30,7 +32,7 @@ def member_form(key_prefix, existing=None):
 
     plans = payments_service.list_plans(conn)
     if not plans:
-        st.warning("Add a membership plan first (Payments → Manage Plans) before registering a member.")
+        st.warning("Add a membership plan first (Settings → Membership Plans) before registering a member.")
         return None, None
 
     data = {"photo_path": existing.get("photo_path")}
@@ -63,6 +65,13 @@ def member_form(key_prefix, existing=None):
     data["has_pt"] = col_pt.checkbox(
         "Has Personal Training (+₹3000/mo)", value=bool(existing.get("has_pt", 0)), key=f"{key_prefix}_has_pt"
     )
+    # only worth saying once a total has actually been configured -- 0 means
+    # no limit is being enforced, so there's no shortage to warn about
+    locker_total = settings_service.get_locker_count(conn)
+    if locker_total > 0:
+        col_locker.caption(
+            f"{settings_service.lockers_in_use(conn)} of {locker_total} lockers in use."
+        )
 
     trainer_options = [None] + [t["id"] for t in trainers_service.list_trainers(conn)]
     trainer_labels = {t["id"]: t["name"] for t in trainers_service.list_trainers(conn)}
@@ -251,7 +260,6 @@ elif st.session_state.viewing_member_id is not None:
     plan_labels_view = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
     trainer_labels_view = {t["id"]: t["name"] for t in trainers_service.list_trainers(conn, active_only=False)}
     st.write(f"**Mobile:** {m['mobile'] or '—'}")
-    st.write(f"**Email:** {m['email'] or '—'}")
     st.write(f"**Address:** {m['address'] or '—'}")
     st.write(f"**Plan:** {plan_labels_view.get(m['plan_id'], '—')}")
     st.write(f"**Personal Trainer:** {trainer_labels_view.get(m['trainer_id'], '—')}")
@@ -322,19 +330,13 @@ else:
     show_inactive = st.checkbox("Show inactive members", key="member_show_inactive")
 
     MEMBERS_PAGE_SIZE = 20
-    if "member_list_page" not in st.session_state:
-        st.session_state.member_list_page = 1
     if st.session_state.get("member_list_last_query") != query:
         st.session_state.member_list_page = 1
         st.session_state.member_list_last_query = query
 
     results = members_service.search_members(conn, query, active_only=not show_inactive)
     total = len(results)
-    total_pages = max(1, -(-total // MEMBERS_PAGE_SIZE))
-    st.session_state.member_list_page = min(max(st.session_state.member_list_page, 1), total_pages)
-    page = st.session_state.member_list_page
-    start = (page - 1) * MEMBERS_PAGE_SIZE
-    page_results = results[start:start + MEMBERS_PAGE_SIZE]
+    page_results, member_page_controls = ui.paginate(results, MEMBERS_PAGE_SIZE, "member_list_page")
 
     plan_labels = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
 
@@ -365,12 +367,4 @@ else:
             st.session_state.viewing_member_id = m["id"]
             st.rerun()
 
-    if total_pages > 1:
-        col_prev, col_page, col_next = st.columns([1, 2, 1])
-        if col_prev.button("← Previous", key="member_page_prev", disabled=page <= 1):
-            st.session_state.member_list_page -= 1
-            st.rerun()
-        col_page.write(f"Page {page} of {total_pages}")
-        if col_next.button("Next →", key="member_page_next", disabled=page >= total_pages):
-            st.session_state.member_list_page += 1
-            st.rerun()
+    member_page_controls()

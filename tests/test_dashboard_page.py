@@ -403,3 +403,77 @@ def test_signin_save_phone_then_signs_in_member(tmp_path, monkeypatch):
     from services import attendance as attendance_service
     assert attendance_service.todays_signin_count(conn, member_id) == 1
     conn.close()
+
+
+def test_signin_search_with_no_matches_says_so(tmp_path, monkeypatch):
+    # silence used to be ambiguous: staff couldn't tell "still searching"
+    # from "nobody by that name"
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_nomatch.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_nomatch"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Zzzzz").run()
+
+    assert not at.exception
+    assert any("no member found" in el.value.lower() for el in at.info)
+
+
+def test_signin_search_with_matches_shows_no_empty_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_match.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_match"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+
+    assert not at.exception
+    assert not any("no member found" in el.value.lower() for el in at.info)
+
+
+def test_signin_before_typing_anything_shows_no_empty_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_untouched.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_untouched"))
+    import db as db_module
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    assert not at.exception
+    assert not any("no member found" in el.value.lower() for el in at.info)

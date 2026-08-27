@@ -82,3 +82,47 @@ def login_logo():
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+def page_bounds(total, page_size, page):
+    """Clamp `page` into range and return (page, total_pages, start, end).
+
+    Pulled out of the widget below so the arithmetic -- the ceiling
+    division and the clamping that keeps a viewer from being stranded on
+    a page that no longer exists after a delete -- is testable without a
+    Streamlit runtime.
+    """
+    total_pages = max(1, -(-total // page_size))
+    page = min(max(page, 1), total_pages)
+    start = (page - 1) * page_size
+    return page, total_pages, start, min(start + page_size, total)
+
+
+def paginate(items, page_size, state_key):
+    """Return (page_items, render_controls) for one paginated list.
+
+    The controls are handed back as a callable rather than drawn here, so
+    a caller can render rows first and place prev/next underneath them --
+    which is where every list in this app already puts them.
+
+    `state_key` names this list's page number in session_state, so two
+    paginated lists on one screen don't fight over the same counter.
+    """
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 1
+    page, total_pages, start, end = page_bounds(len(items), page_size, st.session_state[state_key])
+    st.session_state[state_key] = page
+
+    def render_controls():
+        if total_pages <= 1:
+            return
+        col_prev, col_page, col_next = st.columns([1, 2, 1])
+        if col_prev.button("← Previous", key=f"{state_key}_prev", disabled=page <= 1):
+            st.session_state[state_key] -= 1
+            st.rerun()
+        col_page.write(f"Page {page} of {total_pages}")
+        if col_next.button("Next →", key=f"{state_key}_next", disabled=page >= total_pages):
+            st.session_state[state_key] += 1
+            st.rerun()
+
+    return items[start:end], render_controls

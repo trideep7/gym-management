@@ -22,9 +22,10 @@ def test_help_page_renders_all_sections(tmp_path, monkeypatch):
     assert expander_labels == [
         "Signing In Members (Dashboard)",
         "Members — Add, Edit, View, Search",
-        "Payments — Plans, Marking Paid, Reminders",
+        "Payments — Upcoming, Overdue, Never Paid",
         "Reminder Message Templates",
         "Equipment — Inventory",
+        "Settings — Plans, Lockers, Users",
         "Reports",
         "Common Issues",
     ]
@@ -33,3 +34,6 @@ def test_help_page_renders_all_sections(tmp_path, monkeypatch):
     assert any("Overdue Payment" in el.value for el in at.markdown)
     assert any("Reactivating a member" in el.value for el in at.markdown)
     assert any("Active Members" in el.value for el in at.markdown)
+    # the two things staff can now configure
+    assert any("Total lockers" in el.value for el in at.markdown)
+    assert any("Grace window" in el.value for el in at.markdown)

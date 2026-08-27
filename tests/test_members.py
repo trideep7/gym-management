@@ -187,3 +187,94 @@ def test_blank_mobile_is_stored_as_null_not_empty_string(conn):
     existing = members.get_member(conn, member_id)
     members.update_member(conn, member_id, {**existing, "mobile": "   "})
     assert members.get_member(conn, member_id)["mobile"] is None
+
+
+# --- locker capacity: the gym has a fixed number of lockers
+
+def _fill_lockers(conn, plan_id, count):
+    for i in range(count):
+        members.create_member(
+            conn,
+            {"first_name": f"Holder{i}", "mobile": f"90000001{i:02d}",
+             "plan_id": plan_id, "has_locker": True},
+        )
+
+
+def test_create_member_with_locker_is_blocked_when_all_lockers_are_taken(conn):
+    from services import settings as settings_service
+
+    plan_id = make_plan(conn)
+    settings_service.set_locker_count(conn, 2)
+    _fill_lockers(conn, plan_id, 2)
+
+    with pytest.raises(ValueError, match="locker"):
+        members.create_member(
+            conn, {"first_name": "Asha", "mobile": "9000000999", "plan_id": plan_id, "has_locker": True}
+        )
+
+
+def test_create_member_with_locker_succeeds_while_one_is_free(conn):
+    from services import settings as settings_service
+
+    plan_id = make_plan(conn)
+    settings_service.set_locker_count(conn, 3)
+    _fill_lockers(conn, plan_id, 2)
+
+    member_id = members.create_member(
+        conn, {"first_name": "Asha", "mobile": "9000000999", "plan_id": plan_id, "has_locker": True}
+    )
+    assert members.get_member(conn, member_id)["has_locker"] == 1
+
+
+def test_create_member_without_a_locker_is_unaffected_when_lockers_are_full(conn):
+    from services import settings as settings_service
+
+    plan_id = make_plan(conn)
+    settings_service.set_locker_count(conn, 1)
+    _fill_lockers(conn, plan_id, 1)
+
+    member_id = members.create_member(
+        conn, {"first_name": "Asha", "mobile": "9000000999", "plan_id": plan_id}
+    )
+    assert members.get_member(conn, member_id)["has_locker"] == 0
+
+
+def test_locker_count_of_zero_means_no_limit_is_enforced(conn):
+    # an existing database starts at 0; it must not block every assignment
+    plan_id = make_plan(conn)
+    _fill_lockers(conn, plan_id, 5)
+    member_id = members.create_member(
+        conn, {"first_name": "Asha", "mobile": "9000000999", "plan_id": plan_id, "has_locker": True}
+    )
+    assert members.get_member(conn, member_id)["has_locker"] == 1
+
+
+def test_editing_a_member_who_already_holds_a_locker_is_not_self_blocked(conn):
+    # the Dashboard's quick phone-save calls update_member with the
+    # member's existing data -- counting them against their own locker
+    # would make a full gym unable to edit its own locker holders
+    from services import settings as settings_service
+
+    plan_id = make_plan(conn)
+    settings_service.set_locker_count(conn, 2)
+    _fill_lockers(conn, plan_id, 2)
+    holder = members.search_members(conn, "Holder0")[0]
+
+    members.update_member(conn, holder["id"], {**dict(holder), "mobile": "9111111111"})
+
+    assert members.get_member(conn, holder["id"])["mobile"] == "9111111111"
+
+
+def test_granting_a_locker_on_edit_is_blocked_when_all_are_taken(conn):
+    from services import settings as settings_service
+
+    plan_id = make_plan(conn)
+    settings_service.set_locker_count(conn, 2)
+    _fill_lockers(conn, plan_id, 2)
+    member_id = members.create_member(
+        conn, {"first_name": "Asha", "mobile": "9000000999", "plan_id": plan_id}
+    )
+    existing = dict(members.get_member(conn, member_id))
+
+    with pytest.raises(ValueError, match="locker"):
+        members.update_member(conn, member_id, {**existing, "has_locker": True})

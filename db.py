@@ -114,6 +114,11 @@ CREATE TABLE IF NOT EXISTS trainers (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS trainer_payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL REFERENCES members(id),
@@ -158,6 +163,7 @@ def init_db(conn):
     _migrate_add_member_trainer_id(conn)
     _migrate_make_trainer_payment_trainer_nullable(conn)
     _migrate_remove_attendance_unique_constraint(conn)
+    _migrate_add_payment_period_start(conn)
     os.makedirs(get_photos_dir(), exist_ok=True)
 
 
@@ -311,6 +317,28 @@ def _migrate_remove_attendance_unique_constraint(conn):
             """
         )
         conn.commit()
+
+
+def _migrate_add_payment_period_start(conn):
+    # Payments recorded before billing periods were tracked only stored
+    # valid_until. Reconstruct the period they covered by working back from
+    # the plan's duration -- that's exactly what the old
+    # valid_until = paid_on + duration_days formula implied, so historical
+    # rows keep rendering the dates they always effectively had.
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(payments)")]
+    if "period_start" in cols:
+        return
+    conn.execute("ALTER TABLE payments ADD COLUMN period_start TEXT")
+    # A payment whose plan row was hard-deleted has no duration to work back
+    # from; the subquery yields NULL there and date(NULL) leaves it NULL
+    # rather than inventing a date.
+    conn.execute(
+        "UPDATE payments SET period_start = date("
+        "  valid_until,"
+        "  '-' || (SELECT duration_days FROM membership_plans WHERE id = payments.plan_id) || ' days'"
+        ") WHERE period_start IS NULL"
+    )
+    conn.commit()
 
 
 def seed_admin(conn):

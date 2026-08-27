@@ -274,3 +274,97 @@ def test_upcoming_expirations_includes_only_paid_members_expiring_within_window(
     assert expires_in_10_days not in ids
     assert overdue not in ids
     assert no_payment not in ids
+
+
+# --- billing periods: a member's cycle is anchored to their period,
+# --- not to whichever day they happened to walk in with cash
+
+def _cycle_member(conn, duration_days=30):
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, duration_days)
+    member_id = members.create_member(
+        conn, {"first_name": "Asha", "mobile": "9000000222", "plan_id": plan_id}
+    )
+    user_id = auth.create_user(conn, "cycle_staff", "pw12345", "Staff One", "staff")
+    return member_id, plan_id, user_id
+
+
+def _period(conn, member_id):
+    row = conn.execute(
+        "SELECT period_start, valid_until FROM payments WHERE member_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (member_id,),
+    ).fetchone()
+    return row["period_start"], row["valid_until"]
+
+
+def test_first_payment_starts_its_period_on_the_payment_date(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    assert _period(conn, member_id) == ("2026-01-15", "2026-02-14")
+
+
+def test_renewal_paid_on_time_starts_the_day_after_the_last_period(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-14")
+    assert _period(conn, member_id) == ("2026-02-15", "2026-03-17")
+
+
+def test_renewal_paid_a_few_days_early_keeps_the_cycle(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-12")
+    assert _period(conn, member_id) == ("2026-02-15", "2026-03-17")
+
+
+def test_renewal_paid_a_few_days_late_keeps_the_cycle(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-17")
+    assert _period(conn, member_id) == ("2026-02-15", "2026-03-17")
+
+
+def test_renewal_paid_beyond_the_grace_window_restarts_from_the_payment_date(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-24")
+    assert _period(conn, member_id) == ("2026-02-24", "2026-03-26")
+
+
+def test_member_returning_months_later_restarts_from_the_payment_date(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-05-20")
+    assert _period(conn, member_id) == ("2026-05-20", "2026-06-19")
+
+
+def test_paying_far_in_advance_still_chains_rather_than_shortening_cover(conn):
+    # prepaying a month early must never cut the member's own coverage
+    # short -- only lateness past the grace window re-anchors
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-16")
+    assert _period(conn, member_id) == ("2026-02-15", "2026-03-17")
+
+
+def test_grace_window_is_read_from_settings(conn):
+    from services import settings as settings_service
+
+    member_id, plan_id, user_id = _cycle_member(conn)
+    settings_service.set_renewal_grace_days(conn, 2)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    # five days late is inside the default 7-day window but outside this one
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-19")
+    assert _period(conn, member_id) == ("2026-02-19", "2026-03-21")
+
+
+def test_payment_date_is_recorded_separately_from_the_period(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-17")
+    row = conn.execute(
+        "SELECT paid_on, period_start FROM payments WHERE member_id = ? ORDER BY id DESC LIMIT 1",
+        (member_id,),
+    ).fetchone()
+    assert row["paid_on"] == "2026-02-17"
+    assert row["period_start"] == "2026-02-15"

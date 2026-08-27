@@ -55,26 +55,37 @@ with st.expander("Members — Add, Edit, View, Search"):
         """
     )
 
-with st.expander("Payments — Plans, Marking Paid, Reminders"):
+with st.expander("Payments — Upcoming, Overdue, Never Paid"):
     st.markdown(
         """
-**Managing plans** (Payments → *Manage Plans* tab)
-1. Fill in **Plan Name**, **Amount**, and **Duration (days)**.
-2. Click **Add Plan**.
-- Deleting a plan removes it only if it's never been used. If any member
-  or payment already references it, it's **deactivated** instead (it
-  just stops showing up as an option for new members/payments).
+Payments is split into three pages in the sidebar:
 
-**Marking a member as paid** (Payments → *Member Status* tab)
-1. Find the member's row (use **Filter by status** to narrow the list).
-2. Click **Mark Paid** — this records a payment for their assigned plan
-   and pushes their due date forward by the plan's duration.
+- **Upcoming** — members whose plan expires in the next 7 days, soonest
+  first. Take renewals here *before* they lapse.
+- **Overdue** — members whose plan has already expired.
+- **Never Paid** — members who are registered but have no payment on
+  record yet.
+
+Each page has a **Sort by** control above the table — *Earliest first*
+or *Latest first* on that page's own date column. Each page remembers
+its own choice, and switching direction takes you back to page 1.
+
+**Marking a member as paid**
+1. Find the member on whichever of the three pages they're on.
+2. Click **Mark Paid** — this records a payment for their assigned plan.
 - **Mark Paid** is disabled if the member has no plan assigned.
 
+**Plan dates don't move when a payment is a day or two off**
+A member's plan runs from where their last one ended, not from the day
+they happened to pay. Someone on a 15th-of-the-month cycle who pays on
+the 13th or the 17th stays on the 15th. Only a member who pays *later*
+than the grace window allows (Settings → Gym Settings, 7 days by
+default) gets a fresh cycle starting the day they paid.
+
 **Payment reminders**
-- On the *Member Status* tab or a member's View screen, click **Log
-  Reminder** (or **Remind Again**) after you've contacted a member about
-  an overdue payment, to keep a record of when they were last reminded.
+- Click **Log Reminder** (or **Remind Again**) on any of the three
+  pages, or on a member's View screen, after you've contacted someone
+  about a payment — it keeps a record of when they were last reminded.
         """
     )
 
@@ -82,8 +93,8 @@ with st.expander("Reminder Message Templates"):
     st.markdown(
         """
 Copy-paste templates for contacting members. Fill in `[Name]`, `[Plan]`,
-and `[Due Date]` — you'll find these on the Payments page's *Member
-Status* tab (the **Due Date** column).
+and `[Due Date]` — you'll find these on the **Upcoming** and
+**Overdue** pages.
 
 **Upcoming Renewal**
 ```
@@ -99,20 +110,54 @@ and is now overdue. Please renew at your earliest convenience to keep
 your membership active. Let us know if you have any questions!
 ```
 
-After sending either message, click **Log Reminder** on the Payments
-page or the member's View screen so there's a record of it.
+After sending either message, click **Log Reminder** on the Upcoming
+or Overdue page, or on the member's View screen, so there's a record
+of it.
         """
     )
 
 with st.expander("Equipment — Inventory"):
     st.markdown(
         """
-1. Go to **Equipment**.
+1. Go to **Settings → Equipment**.
 2. Fill in **Name** (required), **Quantity**, and optional **Notes**.
 3. Click **Add Equipment**.
 
 Use **Delete** next to an item to remove it. This is permanent — there's
 no deactivate option for equipment.
+        """
+    )
+
+with st.expander("Settings — Plans, Lockers, Users"):
+    st.markdown(
+        """
+Everything the gym is configured with lives under **Settings** in the
+sidebar.
+
+**Membership Plans**
+1. Fill in **Plan Name**, **Amount**, and **Duration (days)**.
+2. Click **Add Plan**.
+- Deleting a plan removes it only if it's never been used. If any member
+  or payment already references it, it's **deactivated** instead — it
+  just stops showing up as an option for new members and payments.
+
+**Gym Settings → Total lockers**
+Set how many lockers the gym actually has. Once a total is set, ticking
+**Has Locker** on a member is refused when they're all taken, and the
+member form shows how many are in use. `0` means no limit is being
+enforced. Lowering the total below the number already handed out is
+refused — free some up first. Nothing is ever taken away automatically.
+
+**Gym Settings → Grace window (days)**
+How late a renewal can be and still keep a member's existing plan dates.
+At the default of 7, someone due on the 15th who pays on the 13th or the
+17th keeps their cycle. Pay later than that and their new plan starts on
+the day they paid.
+
+**Users** (admin only)
+Create named staff logins rather than sharing the admin account. Users
+are deactivated, never deleted, so past payments and sign-ins keep
+showing who recorded them.
         """
     )
 
@@ -138,7 +183,7 @@ with st.expander("Common Issues"):
   `987654321` (9 digits) are not.
 - **Can't add a member / no plans in the dropdown** — you need at least
   one **Membership Plan** before you can register a member. Add one
-  under Payments → *Manage Plans* first.
+  under Settings → *Membership Plans* first.
 - **A mobile number already exists** — the app warns you if a mobile
   number matches an existing active member, but it won't stop you from
   saving anyway. Double-check you're not creating a duplicate record.

@@ -1,5 +1,7 @@
 import datetime
 
+from services import settings as settings_service
+
 LOCKER_MONTHLY_FEE = 100
 PT_MONTHLY_FEE = 3000
 
@@ -63,6 +65,32 @@ def quote_amount(conn, member_id, plan_id):
     return _amount_for(plan, member)
 
 
+def _period_start_for(conn, member_id, paid_on_date):
+    """Where this payment's billing period begins.
+
+    A member's cycle belongs to their membership, not to whichever day
+    they happened to walk in with cash: renewals chain from the previous
+    period's end, so paying a day or two either side of the due date
+    leaves the dates untouched. Someone who genuinely lapsed -- later
+    than the grace window allows -- starts fresh from the day they paid.
+
+    Paying *early* always chains, however early. Re-anchoring a
+    prepayment would shorten the member's own coverage, which is the
+    opposite of what paying ahead should do.
+    """
+    previous = conn.execute(
+        "SELECT valid_until FROM payments WHERE member_id = ? ORDER BY valid_until DESC LIMIT 1",
+        (member_id,),
+    ).fetchone()
+    if previous is None:
+        return paid_on_date
+    previous_end = datetime.date.fromisoformat(previous["valid_until"])
+    days_late = (paid_on_date - previous_end).days
+    if days_late > settings_service.get_renewal_grace_days(conn):
+        return paid_on_date
+    return previous_end + datetime.timedelta(days=1)
+
+
 def mark_paid(conn, member_id, plan_id, recorded_by, paid_on=None):
     plan = conn.execute("SELECT * FROM membership_plans WHERE id = ?", (plan_id,)).fetchone()
     if plan is None:
@@ -79,11 +107,15 @@ def mark_paid(conn, member_id, plan_id, recorded_by, paid_on=None):
         paid_on_date = paid_on
 
     amount = _amount_for(plan, member)
-    valid_until = paid_on_date + datetime.timedelta(days=plan["duration_days"])
+    period_start = _period_start_for(conn, member_id, paid_on_date)
+    valid_until = period_start + datetime.timedelta(days=plan["duration_days"])
     cursor = conn.execute(
-        "INSERT INTO payments (member_id, plan_id, amount, paid_on, valid_until, recorded_by) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (member_id, plan_id, amount, paid_on_date.isoformat(), valid_until.isoformat(), recorded_by),
+        "INSERT INTO payments (member_id, plan_id, amount, paid_on, period_start, valid_until, recorded_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            member_id, plan_id, amount, paid_on_date.isoformat(),
+            period_start.isoformat(), valid_until.isoformat(), recorded_by,
+        ),
     )
     conn.commit()
     return cursor.lastrowid

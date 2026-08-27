@@ -2,6 +2,8 @@ import datetime
 import os
 import re
 
+from services import settings as settings_service
+
 REQUIRED_FIELDS = ("first_name", "plan_id")
 MOBILE_PATTERN = re.compile(r"^[1-9]\d{9}$")
 
@@ -51,8 +53,30 @@ def _column_value(col, data):
     return value
 
 
+def _check_locker_capacity(conn, data, member_id=None):
+    """Refuse to hand out a locker the gym doesn't have.
+
+    `member_id` is the member being edited, left out of the occupied
+    count so someone who already holds a locker isn't counted against
+    their own save -- the Dashboard's quick phone-save round-trips a
+    member's existing data through update_member, and a full gym would
+    otherwise be unable to edit its own locker holders.
+    """
+    if not data.get("has_locker"):
+        return
+    total = settings_service.get_locker_count(conn)
+    if total <= 0:  # no limit configured yet
+        return
+    if settings_service.lockers_in_use(conn, exclude_member_id=member_id) >= total:
+        raise ValueError(
+            f"All {total} lockers are in use. Free one up first, or raise the "
+            "total under Settings -> Gym Settings."
+        )
+
+
 def create_member(conn, data):
     _validate(data)
+    _check_locker_capacity(conn, data)
     values = [_column_value(col, data) for col in COLUMNS]
     placeholders = ", ".join(["?"] * len(COLUMNS))
     cursor = conn.execute(
@@ -66,6 +90,7 @@ def create_member(conn, data):
 
 def update_member(conn, member_id, data):
     _validate(data)
+    _check_locker_capacity(conn, data, member_id=member_id)
     assignments = ", ".join(f"{col} = ?" for col in COLUMNS)
     values = [_column_value(col, data) for col in COLUMNS]
     conn.execute(f"UPDATE members SET {assignments} WHERE id = ?", values + [member_id])
