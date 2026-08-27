@@ -7,6 +7,7 @@ from services import attendance as attendance_service
 from services import members as members_service
 from services import payments as payments_service
 from services import reminders as reminders_service
+from services import trainers as trainers_service
 from utils.dates import format_date, format_time
 from utils.errors import report_unexpected_error, safe_action
 
@@ -51,9 +52,26 @@ def member_form(key_prefix, existing=None):
     data["address"] = st.text_input("Address", value=existing.get("address", ""), key=f"{key_prefix}_address")
 
     col3, col4, col5 = st.columns(3)
-    data["mobile"] = col3.text_input("Mobile *", value=existing.get("mobile", ""), key=f"{key_prefix}_mobile")
+    data["mobile"] = col3.text_input("Mobile", value=existing.get("mobile", ""), key=f"{key_prefix}_mobile")
     data["email"] = col4.text_input("Email", value=existing.get("email", ""), key=f"{key_prefix}_email")
     data["instagram_id"] = col5.text_input("Instagram ID", value=existing.get("instagram_id", ""), key=f"{key_prefix}_instagram")
+
+    col_locker, col_pt = st.columns(2)
+    data["has_locker"] = col_locker.checkbox(
+        "Has Locker (+₹100/mo)", value=bool(existing.get("has_locker", 0)), key=f"{key_prefix}_has_locker"
+    )
+    data["has_pt"] = col_pt.checkbox(
+        "Has Personal Training (+₹3000/mo)", value=bool(existing.get("has_pt", 0)), key=f"{key_prefix}_has_pt"
+    )
+
+    trainer_options = [None] + [t["id"] for t in trainers_service.list_trainers(conn)]
+    trainer_labels = {t["id"]: t["name"] for t in trainers_service.list_trainers(conn)}
+    current_trainer_id = existing.get("trainer_id")
+    trainer_index = trainer_options.index(current_trainer_id) if current_trainer_id in trainer_options else 0
+    data["trainer_id"] = st.selectbox(
+        "Personal Trainer", trainer_options, index=trainer_index,
+        format_func=lambda tid: "None" if tid is None else trainer_labels[tid], key=f"{key_prefix}_trainer_id",
+    )
 
     data["occupation"] = st.text_input("Occupation", value=existing.get("occupation", ""), key=f"{key_prefix}_occupation")
     data["is_student"] = st.checkbox("Student", value=bool(existing.get("is_student", 0)), key=f"{key_prefix}_is_student")
@@ -138,6 +156,7 @@ def save_uploaded_photo(member_id, photo_file, data):
 
 FORM_FIELD_SUFFIXES = [
     "plan_id", "surname", "first_name", "address", "mobile", "email", "instagram",
+    "has_locker", "has_pt", "trainer_id",
     "occupation", "is_student", "school", "grade", "dob", "gender",
     "how_found", "time_slot", "med_heart", "med_dizzy", "med_blackouts",
     "med_asthma", "med_bp", "med_diabetes", "med_gout", "med_other",
@@ -230,10 +249,12 @@ elif st.session_state.viewing_member_id is not None:
     st.write(f"{active_label}  |  {badge}")
 
     plan_labels_view = {p["id"]: p["name"] for p in payments_service.list_plans(conn, active_only=False)}
-    st.write(f"**Mobile:** {m['mobile']}")
+    trainer_labels_view = {t["id"]: t["name"] for t in trainers_service.list_trainers(conn, active_only=False)}
+    st.write(f"**Mobile:** {m['mobile'] or '—'}")
     st.write(f"**Email:** {m['email'] or '—'}")
     st.write(f"**Address:** {m['address'] or '—'}")
     st.write(f"**Plan:** {plan_labels_view.get(m['plan_id'], '—')}")
+    st.write(f"**Personal Trainer:** {trainer_labels_view.get(m['trainer_id'], '—')}")
 
     st.subheader("Recent Payments")
     history = payments_service.payment_history(conn, member_id, limit=6)
@@ -337,7 +358,7 @@ else:
 
         row = st.columns([3, 2, 2, 2, 2])
         row[0].write(f"{m['first_name']} {m['surname'] or ''}")
-        row[1].write(m["mobile"])
+        row[1].write(m["mobile"] or "—")
         row[2].write(plan_labels.get(m["plan_id"], "—"))
         row[3].write(badge)
         if row[4].button("View", key=f"view_button_{m['id']}"):

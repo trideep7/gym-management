@@ -600,3 +600,111 @@ def test_reminder_log_button_appears_for_unpaid_member_and_logs(tmp_path, monkey
     # the member is still unpaid, so the button to log another reminder
     # must still be offered (not hidden after the first one)
     assert at.button(key=f"log_reminder_{member_id}")
+
+
+def test_member_form_has_personal_trainer_selectbox_defaulting_to_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test20.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos20"))
+    import db as db_module
+    from services import payments as payments_service
+    from services import trainers as trainers_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    trainers_service.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key="show_add_member_button").click().run()
+
+    trainer_select = at.selectbox(key="add_trainer_id")
+    assert trainer_select.value is None
+    # .options holds the format_func-rendered display strings, not the raw
+    # option values (which include the real None) — see .value above for that.
+    assert "None" in trainer_select.options
+
+
+def test_assigning_and_clearing_trainer_persists(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test21.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos21"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+    from services import trainers as trainers_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    trainer_id = trainers_service.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"view_button_{member_id}").click().run()
+    at.button(key=f"edit_from_view_{member_id}").click().run()
+    at.selectbox(key=f"edit_{member_id}_trainer_id").select(trainer_id).run()
+    at.button(key=f"save_edit_{member_id}").click().run()
+
+    assert not at.exception
+    conn2 = db_module.get_connection(str(tmp_path / "test21.db"))
+    assert members_service.get_member(conn2, member_id)["trainer_id"] == trainer_id
+    conn2.close()
+
+
+def test_edit_form_shows_currently_assigned_trainer(tmp_path, monkeypatch):
+    # The reverse direction (selecting the "None" entry in the browser and
+    # having it persist) is covered by tests/test_members.py's
+    # test_trainer_id_round_trips_through_create_and_update at the service
+    # layer, and verified in a real browser during manual QA — AppTest's
+    # Selectbox can't simulate explicitly choosing an option whose
+    # underlying value is None: its _widget_state only sets string_value
+    # when .index is not None, and .index itself returns None whenever
+    # .value is None, so there's no way to distinguish "the None option is
+    # selected" from "nothing was selected" through this test harness.
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test22.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos22"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+    from services import trainers as trainers_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    trainer_id = trainers_service.create_trainer(conn, "Alex", "9000000001", "6-8 AM")
+    member_id = members_service.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "trainer_id": trainer_id}
+    )
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+
+    at.button(key=f"view_button_{member_id}").click().run()
+    at.button(key=f"edit_from_view_{member_id}").click().run()
+
+    assert not at.exception
+    assert at.selectbox(key=f"edit_{member_id}_trainer_id").value == trainer_id
