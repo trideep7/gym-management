@@ -137,9 +137,16 @@ sidebar.
 **Membership Plans**
 1. Fill in **Plan Name**, **Amount**, and **Duration (days)**.
 2. Click **Add Plan**.
+- **Edit** corrects a plan's name, price or length. Changes apply to
+  payments recorded from then on — payments already taken keep the
+  amount and dates they were recorded with, so shortening a plan never
+  cuts short cover somebody already paid for.
 - Deleting a plan removes it only if it's never been used. If any member
   or payment already references it, it's **deactivated** instead — it
   just stops showing up as an option for new members and payments.
+- Tick **Show inactive plans** to see deactivated ones. They can still
+  be edited (for the sake of old payment history) and **Reactivate**
+  puts one back in use. Editing an inactive plan does not revive it.
 
 **Gym Settings → Total lockers**
 Set how many lockers the gym actually has. Once a total is set, ticking

@@ -23,6 +23,33 @@ def list_plans(conn, active_only=True):
     return [dict(r) for r in conn.execute(sql).fetchall()]
 
 
+def update_plan(conn, plan_id, name, amount, duration_days):
+    """Correct a plan's name, price or length.
+
+    Only affects payments recorded from here on. Every past payment
+    stores its own amount and period, so shortening a plan can't
+    retroactively cut short cover somebody already paid for.
+
+    Works on deactivated plans too, and leaves is_active alone -- a
+    retired plan may still need its details corrected for history, and
+    editing it shouldn't silently put it back in front of staff.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Plan Name is required.")
+    if int(duration_days) < 1:
+        raise ValueError("Duration must be at least 1 day.")
+    if float(amount) < 0:
+        raise ValueError("Amount can't be negative.")
+    if conn.execute("SELECT 1 FROM membership_plans WHERE id = ?", (plan_id,)).fetchone() is None:
+        raise ValueError(f"No plan with id {plan_id}")
+    conn.execute(
+        "UPDATE membership_plans SET name = ?, amount = ?, duration_days = ? WHERE id = ?",
+        (name, float(amount), int(duration_days), plan_id),
+    )
+    conn.commit()
+
+
 def set_plan_active(conn, plan_id, is_active):
     conn.execute(
         "UPDATE membership_plans SET is_active = ? WHERE id = ?", (1 if is_active else 0, plan_id)

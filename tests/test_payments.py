@@ -1,3 +1,5 @@
+import pytest
+
 import datetime
 
 from services import auth, members, payments
@@ -368,3 +370,70 @@ def test_payment_date_is_recorded_separately_from_the_period(conn):
     ).fetchone()
     assert row["paid_on"] == "2026-02-17"
     assert row["period_start"] == "2026-02-15"
+
+
+# --- editing a plan -----------------------------------------------------
+
+def test_update_plan_changes_name_amount_and_duration(conn):
+    plan_id = payments.create_plan(conn, "Registration (3-Month)", 1500.0, 90)
+    payments.update_plan(conn, plan_id, "Registration (1-Month)", 1500.0, 30)
+    plan = next(p for p in payments.list_plans(conn) if p["id"] == plan_id)
+    assert plan["name"] == "Registration (1-Month)"
+    assert plan["amount"] == 1500.0
+    assert plan["duration_days"] == 30
+
+
+def test_update_plan_leaves_existing_payments_untouched(conn):
+    # history is recorded per payment; shortening a plan must not
+    # retroactively cut short a period somebody already paid for
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Registration", 1500.0, 90)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    before = payments.payment_history(conn, member_id)[0]
+
+    payments.update_plan(conn, plan_id, "Registration", 1500.0, 30)
+
+    after = payments.payment_history(conn, member_id)[0]
+    assert after["paid_on"] == before["paid_on"]
+    assert after["valid_until"] == before["valid_until"] == "2026-04-15"
+    assert after["amount"] == before["amount"]
+
+
+def test_update_plan_applies_the_new_duration_to_the_next_payment(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Registration", 1500.0, 90)
+    payments.update_plan(conn, plan_id, "Registration", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    assert payments.payment_history(conn, member_id)[0]["valid_until"] == "2026-02-14"
+
+
+def test_update_plan_rejects_a_blank_name(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    with pytest.raises(ValueError):
+        payments.update_plan(conn, plan_id, "   ", 1000.0, 30)
+
+
+def test_update_plan_rejects_a_duration_below_one_day(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    with pytest.raises(ValueError):
+        payments.update_plan(conn, plan_id, "Monthly", 1000.0, 0)
+
+
+def test_update_plan_rejects_a_negative_amount(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    with pytest.raises(ValueError):
+        payments.update_plan(conn, plan_id, "Monthly", -1.0, 30)
+
+
+def test_update_plan_rejects_an_unknown_plan(conn):
+    with pytest.raises(ValueError):
+        payments.update_plan(conn, 9999, "Ghost", 100.0, 30)
+
+
+def test_update_plan_can_edit_a_deactivated_plan(conn):
+    plan_id = payments.create_plan(conn, "Old Monthly", 1500.0, 30)
+    payments.set_plan_active(conn, plan_id, False)
+    payments.update_plan(conn, plan_id, "Old Monthly", 1200.0, 30)
+    plan = next(p for p in payments.list_plans(conn, active_only=False) if p["id"] == plan_id)
+    assert plan["amount"] == 1200.0
+    assert plan["is_active"] == 0  # editing must not silently revive it

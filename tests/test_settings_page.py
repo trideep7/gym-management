@@ -229,3 +229,130 @@ def test_delete_plan_with_payment_history_deactivates_instead(tmp_path, monkeypa
     assert "deactivated" in at.success[0].value.lower()
     assert "Monthly" in at.success[0].value
     assert not any(el.value == "Monthly" for el in at.markdown)
+
+
+# --- editing plans ------------------------------------------------------
+
+def _open_plans():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/settings_plans.py")
+    at.run()
+    return at
+
+
+def test_editing_a_plan_updates_its_name_amount_and_duration(tmp_path, monkeypatch):
+    conn = _fresh_app(tmp_path, monkeypatch, "edit1")
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Registration (3-Month)", 1500.0, 90)
+    conn.close()
+
+    at = _open_plans()
+    at.button(key=f"plan_edit_{plan_id}").click().run()
+
+    assert not at.exception
+    at.text_input(key="plan_edit_name").input("Registration (1-Month)").run()
+    at.number_input(key="plan_edit_duration").set_value(30).run()
+    at.button(key="plan_edit_save").click().run()
+
+    assert not at.exception
+    import db as db_module
+
+    check = db_module.get_connection()
+    plan = next(p for p in payments_service.list_plans(check) if p["id"] == plan_id)
+    assert plan["name"] == "Registration (1-Month)"
+    assert plan["duration_days"] == 30
+    check.close()
+
+
+def test_edit_form_is_prefilled_with_the_plans_current_values(tmp_path, monkeypatch):
+    conn = _fresh_app(tmp_path, monkeypatch, "edit2")
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "6 Months", 5000.0, 180)
+    conn.close()
+
+    at = _open_plans()
+    at.button(key=f"plan_edit_{plan_id}").click().run()
+
+    assert not at.exception
+    assert at.text_input(key="plan_edit_name").value == "6 Months"
+    assert at.number_input(key="plan_edit_amount").value == 5000.0
+    assert at.number_input(key="plan_edit_duration").value == 180
+
+
+def test_editing_a_plan_to_a_blank_name_shows_a_friendly_error(tmp_path, monkeypatch):
+    conn = _fresh_app(tmp_path, monkeypatch, "edit3")
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    conn.close()
+
+    at = _open_plans()
+    at.button(key=f"plan_edit_{plan_id}").click().run()
+    at.text_input(key="plan_edit_name").input("   ").run()
+    at.button(key="plan_edit_save").click().run()
+
+    assert not at.exception
+    assert at.error
+    import db as db_module
+
+    check = db_module.get_connection()
+    assert payments_service.list_plans(check)[0]["name"] == "Monthly"
+    check.close()
+
+
+def test_inactive_plans_are_hidden_until_asked_for(tmp_path, monkeypatch):
+    conn = _fresh_app(tmp_path, monkeypatch, "edit4")
+    from services import payments as payments_service
+
+    retired = payments_service.create_plan(conn, "Retired Monthly", 1500.0, 30)
+    payments_service.create_plan(conn, "Monthly", 1000.0, 30)
+    payments_service.set_plan_active(conn, retired, False)
+    conn.close()
+
+    at = _open_plans()
+
+    assert not at.exception
+    assert not any(el.value == "Retired Monthly" for el in at.markdown)
+
+    at.checkbox(key="plan_show_inactive").check().run()
+
+    assert not at.exception
+    assert any(el.value == "Retired Monthly" for el in at.markdown)
+
+
+def test_a_deactivated_plan_can_be_edited_and_reactivated(tmp_path, monkeypatch):
+    conn = _fresh_app(tmp_path, monkeypatch, "edit5")
+    from services import payments as payments_service
+
+    retired = payments_service.create_plan(conn, "Retired Monthly", 1500.0, 30)
+    payments_service.set_plan_active(conn, retired, False)
+    conn.close()
+
+    at = _open_plans()
+    at.checkbox(key="plan_show_inactive").check().run()
+
+    at.button(key=f"plan_edit_{retired}").click().run()
+    at.number_input(key="plan_edit_amount").set_value(1200.0).run()
+    at.button(key="plan_edit_save").click().run()
+
+    assert not at.exception
+    import db as db_module
+
+    check = db_module.get_connection()
+    plan = next(p for p in payments_service.list_plans(check, active_only=False) if p["id"] == retired)
+    assert plan["amount"] == 1200.0
+    assert plan["is_active"] == 0  # editing alone must not revive it
+    check.close()
+
+    at.button(key=f"plan_reactivate_{retired}").click().run()
+
+    assert not at.exception
+    check2 = db_module.get_connection()
+    assert any(p["id"] == retired for p in payments_service.list_plans(check2))
+    check2.close()
