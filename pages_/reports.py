@@ -119,7 +119,13 @@ else:
         payout_header[1].markdown("**Amount Owed**")
         for p in payouts:
             payout_row = st.columns([3, 2])
-            payout_row[0].write(p["trainer_name"])
+            payout_row[0].write(p["trainer_name"] or "⚠️ Not assigned to a trainer")
             payout_row[1].write(f"₹{p['amount_owed']:.2f}")
+        if any(p["trainer_id"] is None for p in payouts):
+            st.caption(
+                "Some members are paying the Personal Training fee without a "
+                "trainer assigned. Assign one on their member page (Members → "
+                "View → Edit) so this amount is credited to the right trainer."
+            )
     else:
         st.write("No trainers added yet.")

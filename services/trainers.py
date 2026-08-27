@@ -76,7 +76,12 @@ def mark_paid_with_pt(conn, member_id, plan_id, recorded_by, paid_on=None):
 
     member = members_service.get_member(conn, member_id)
     pt_charged = False
-    if member and member["has_pt"] and member["trainer_id"]:
+    if member and member["has_pt"]:
+        # keyed off has_pt alone, matching payments._amount_for — the member
+        # is charged the PT fee whether or not a trainer has been assigned
+        # yet, so the payout has to be recorded either way. An unassigned
+        # payout carries trainer_id = NULL and surfaces in trainer_payouts()
+        # as its own bucket, so the money is visible and can be attributed.
         plan = conn.execute("SELECT duration_days FROM membership_plans WHERE id = ?", (plan_id,)).fetchone()
         months = plan["duration_days"] / 30
         amount = payments_service.PT_MONTHLY_FEE * months
@@ -98,7 +103,21 @@ def trainer_payouts(conn, start_date, end_date):
         "GROUP BY trainers.id ORDER BY trainers.name",
         (start_date, end_date),
     ).fetchall()
-    return [dict(r) for r in rows]
+    payouts = [dict(r) for r in rows]
+
+    # PT fees collected from members who have no trainer assigned yet belong
+    # to nobody in particular, but the money is real and must not vanish from
+    # the report — surface it as its own bucket (trainer_id/trainer_name None)
+    # so it's visibly waiting to be attributed.
+    unassigned = conn.execute(
+        "SELECT COALESCE(SUM(trainer_share), 0) AS amount_owed FROM trainer_payments "
+        "WHERE trainer_id IS NULL AND paid_on >= ? AND paid_on <= ?",
+        (start_date, end_date),
+    ).fetchone()["amount_owed"]
+    if unassigned:
+        payouts.append({"trainer_id": None, "trainer_name": None, "amount_owed": unassigned})
+
+    return payouts
 
 
 def pt_summary(conn, start_date, end_date):

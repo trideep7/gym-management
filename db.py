@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS trainers (
 CREATE TABLE IF NOT EXISTS trainer_payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     member_id INTEGER NOT NULL REFERENCES members(id),
-    trainer_id INTEGER NOT NULL REFERENCES trainers(id),
+    trainer_id INTEGER REFERENCES trainers(id),
     amount REAL NOT NULL,
     trainer_share REAL NOT NULL,
     paid_on TEXT NOT NULL,
@@ -156,6 +156,7 @@ def init_db(conn):
     _migrate_add_member_locker_pt_columns(conn)
     _migrate_make_member_mobile_nullable(conn)
     _migrate_add_member_trainer_id(conn)
+    _migrate_make_trainer_payment_trainer_nullable(conn)
     _migrate_remove_attendance_unique_constraint(conn)
     os.makedirs(get_photos_dir(), exist_ok=True)
 
@@ -250,6 +251,40 @@ def _migrate_add_member_trainer_id(conn):
     if "trainer_id" not in cols:
         conn.execute("ALTER TABLE members ADD COLUMN trainer_id INTEGER REFERENCES trainers(id)")
         conn.commit()
+
+
+def _migrate_make_trainer_payment_trainer_nullable(conn):
+    # A member can pay the PT fee before anyone has been assigned to train
+    # them (every member imported from the 2026 spreadsheet is in exactly
+    # that state). The fee still has to be recorded, so trainer_id has to
+    # allow NULL — and SQLite can't drop NOT NULL via ALTER TABLE, so an
+    # existing database needs the table rebuilt.
+    cols_info = list(conn.execute("PRAGMA table_info(trainer_payments)"))
+    if not cols_info:
+        return
+    trainer_col = next((c for c in cols_info if c[1] == "trainer_id"), None)
+    if trainer_col is None or trainer_col[3] == 0:  # notnull flag already off
+        return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        CREATE TABLE trainer_payments_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            trainer_id INTEGER REFERENCES trainers(id),
+            amount REAL NOT NULL,
+            trainer_share REAL NOT NULL,
+            paid_on TEXT NOT NULL,
+            recorded_by INTEGER NOT NULL REFERENCES users(id)
+        );
+        INSERT INTO trainer_payments_new (id, member_id, trainer_id, amount, trainer_share, paid_on, recorded_by)
+            SELECT id, member_id, trainer_id, amount, trainer_share, paid_on, recorded_by FROM trainer_payments;
+        DROP TABLE trainer_payments;
+        ALTER TABLE trainer_payments_new RENAME TO trainer_payments;
+        """
+    )
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _migrate_remove_attendance_unique_constraint(conn):

@@ -284,3 +284,85 @@ def test_init_db_migrates_existing_members_table_without_trainer_id(tmp_path):
 def test_trainer_payments_table_has_expected_columns(conn):
     cols = {r[1] for r in conn.execute("PRAGMA table_info(trainer_payments)")}
     assert cols == {"id", "member_id", "trainer_id", "amount", "trainer_share", "paid_on", "recorded_by"}
+
+
+def test_trainer_payments_allows_null_trainer_id(conn):
+    cols_info = list(conn.execute("PRAGMA table_info(trainer_payments)"))
+    trainer_col = next(c for c in cols_info if c[1] == "trainer_id")
+    assert trainer_col[3] == 0  # notnull flag off
+
+
+def test_init_db_migrates_trainer_payments_with_not_null_trainer_id(tmp_path):
+    # a database created before PT fees could be recorded without an
+    # assigned trainer needs its trainer_payments table rebuilt
+    db_path = str(tmp_path / "old_gym.db")
+    old_conn = db_module.get_connection(db_path)
+    old_conn.executescript(
+        """
+        CREATE TABLE members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            mobile TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE trainers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            mobile TEXT,
+            time_slot TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE trainer_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            trainer_id INTEGER NOT NULL REFERENCES trainers(id),
+            amount REAL NOT NULL,
+            trainer_share REAL NOT NULL,
+            paid_on TEXT NOT NULL,
+            recorded_by INTEGER NOT NULL REFERENCES users(id)
+        );
+        INSERT INTO members (first_name, mobile, is_active, created_at)
+            VALUES ('Sam', '9000000111', 1, '2026-01-01T00:00:00');
+        INSERT INTO users (username, password_hash, full_name, role, is_active, created_at)
+            VALUES ('staffer', 'hash', 'Staff One', 'staff', 1, '2026-01-01T00:00:00');
+        INSERT INTO trainers (name, mobile, time_slot, is_active, created_at)
+            VALUES ('Alex', '9000000001', '6-8 AM', 1, '2026-01-01T00:00:00');
+        INSERT INTO trainer_payments (member_id, trainer_id, amount, trainer_share, paid_on, recorded_by)
+            VALUES (1, 1, 3000, 2000, '2026-08-01', 1);
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    upgraded_conn = db_module.get_connection(db_path)
+    db_module.init_db(upgraded_conn)
+
+    cols_info = list(upgraded_conn.execute("PRAGMA table_info(trainer_payments)"))
+    trainer_col = next(c for c in cols_info if c[1] == "trainer_id")
+    assert trainer_col[3] == 0
+
+    # the existing attributed row must survive
+    row = upgraded_conn.execute("SELECT * FROM trainer_payments WHERE id = 1").fetchone()
+    assert row["trainer_id"] == 1
+    assert row["amount"] == 3000
+
+    # and an unattributed payout must now be insertable
+    upgraded_conn.execute(
+        "INSERT INTO trainer_payments (member_id, trainer_id, amount, trainer_share, paid_on, recorded_by) "
+        "VALUES (1, NULL, 3000, 2000, '2026-09-01', 1)"
+    )
+    upgraded_conn.commit()
+    assert upgraded_conn.execute(
+        "SELECT COUNT(*) AS c FROM trainer_payments WHERE trainer_id IS NULL"
+    ).fetchone()["c"] == 1

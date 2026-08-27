@@ -35,17 +35,15 @@ overdue_count = sum(
 )
 active_members_count = attendance.active_since_count(conn, three_months_ago)
 monthly_active_users = attendance.active_since_count(conn, month_start)
-monthly_revenue = payments.revenue_since(conn, month_start)
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Total Members", len(all_members))
 col2.metric("Active Members", active_members_count)
 col3.metric("Monthly Active Users", monthly_active_users)
 
-col4, col5, col6 = st.columns(3)
+col4, col5 = st.columns(2)
 col4.metric("Checked In Today", checked_in_today_count)
 col5.metric("Payments Overdue", overdue_count)
-col6.metric("Monthly Revenue So Far", f"₹{monthly_revenue:.2f}")
 
 
 def complete_signin(member):
@@ -72,6 +70,22 @@ def confirm_signin_dialog(member, reasons):
         st.rerun()
 
 
+def attempt_signin(member, status):
+    reasons = []
+    if not member["is_active"]:
+        reasons.append("This member is marked inactive.")
+    if status["status"] != "paid":
+        reasons.append(f"This member has not paid (status: {status['status'].replace('_', ' ').title()}).")
+    already_today = attendance.todays_signin_count(conn, member["id"])
+    if already_today:
+        visit_word = "time" if already_today == 1 else "times"
+        reasons.append(f"This member has already signed in {already_today} {visit_word} today.")
+    if reasons:
+        confirm_signin_dialog(member, reasons)
+    else:
+        complete_signin(member)
+
+
 st.subheader("Sign In")
 if "signin_search_key_version" not in st.session_state:
     st.session_state.signin_search_key_version = 0
@@ -92,22 +106,32 @@ for m in results:
         badge = "⚪ No payment yet"
 
     cols = st.columns([3, 2, 2])
-    cols[0].write(f"{m['first_name']} {m['surname'] or ''} — {m['mobile']}")
+    cols[0].write(f"{m['first_name']} {m['surname'] or ''} — {m['mobile'] or 'no phone on file'}")
     cols[1].write(badge)
-    if cols[2].button("Sign In", key=f"signin_{m['id']}"):
-        reasons = []
-        if not m["is_active"]:
-            reasons.append("This member is marked inactive.")
-        if status["status"] != "paid":
-            reasons.append(f"This member has not paid (status: {status['status'].replace('_', ' ').title()}).")
-        already_today = attendance.todays_signin_count(conn, m["id"])
-        if already_today:
-            visit_word = "time" if already_today == 1 else "times"
-            reasons.append(f"This member has already signed in {already_today} {visit_word} today.")
-        if reasons:
-            confirm_signin_dialog(m, reasons)
+    with cols[2]:
+        if not m["mobile"]:
+            phone_value = st.text_input(
+                "Mobile", key=f"signin_phone_{m['id']}",
+                placeholder="10-digit mobile", label_visibility="collapsed",
+            )
+            if st.button("Save Phone & Sign In", key=f"signin_save_phone_{m['id']}"):
+                if not (phone_value or "").strip():
+                    # _validate treats blank as "no phone given" and lets it
+                    # through, so this branch has to insist on one itself —
+                    # otherwise Save silently re-saves no phone and signs in
+                    st.error("Enter a 10-digit mobile number to save and sign in.")
+                else:
+                    update_data = {col: m.get(col) for col in members.COLUMNS}
+                    update_data["mobile"] = phone_value
+                    try:
+                        members.update_member(conn, m["id"], update_data)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        attempt_signin({**m, "mobile": phone_value}, status)
         else:
-            complete_signin(m)
+            if st.button("Sign In", key=f"signin_{m['id']}"):
+                attempt_signin(m, status)
 
 st.subheader("Today's Sign-Ins")
 if today_signins:

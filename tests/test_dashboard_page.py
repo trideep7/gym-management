@@ -1,3 +1,6 @@
+import pytest
+
+
 def login_as_admin(at):
     at.text_input(key="login_username").input("admin").run()
     at.text_input(key="login_password").input("password").run()
@@ -45,7 +48,11 @@ def test_dashboard_shows_todays_signins(tmp_path, monkeypatch):
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
     member_id = members.create_member(conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id})
     user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
-    attendance.sign_in(conn, member_id, user_id, when=datetime.datetime(2026, 8, 25, 14, 32, 0))
+    # must be *today* — the Dashboard's list comes from attendance.list_today(),
+    # so a hardcoded calendar date silently stops matching once the date rolls
+    # over. Pin only the time-of-day, which is what the 02:32 PM assert checks.
+    signed_in_at = datetime.datetime.combine(datetime.date.today(), datetime.time(14, 32, 0))
+    attendance.sign_in(conn, member_id, user_id, when=signed_in_at)
     conn.close()
 
     from streamlit.testing.v1 import AppTest
@@ -257,3 +264,142 @@ def test_signin_no_warning_for_paid_active_member(tmp_path, monkeypatch):
     assert not at.exception
     assert not at.warning
     assert "signed in" in at.success[0].value.lower()
+
+
+def test_signin_requires_phone_for_member_with_no_mobile_on_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_nomobile.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_nomobile"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+
+    assert not at.exception
+    with pytest.raises(KeyError):
+        at.button(key=f"signin_{member_id}")
+    assert at.text_input(key=f"signin_phone_{member_id}")
+    assert at.button(key=f"signin_save_phone_{member_id}")
+
+
+def test_signin_save_phone_rejects_invalid_number(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_badphone.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_badphone"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    at.text_input(key=f"signin_phone_{member_id}").input("123").run()
+    at.button(key=f"signin_save_phone_{member_id}").click().run()
+
+    assert not at.exception
+    assert at.error
+    assert not at.success
+
+    conn = db_module.get_connection()
+    assert members_service.get_member(conn, member_id)["mobile"] is None
+    from services import attendance as attendance_service
+    assert attendance_service.todays_signin_count(conn, member_id) == 0
+    conn.close()
+
+
+def test_signin_save_phone_rejects_blank_number(tmp_path, monkeypatch):
+    # clicking Save with an empty box must not sign the member in with no
+    # phone — that silently defeats the guard this whole branch exists for
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_blankphone.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_blankphone"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "plan_id": plan_id})
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    # leave signin_phone_ untouched (blank), then click Save
+    at.button(key=f"signin_save_phone_{member_id}").click().run()
+
+    assert not at.exception
+    assert at.error
+    assert not at.success
+
+    conn = db_module.get_connection()
+    # must stay NULL, not become an empty string
+    assert members_service.get_member(conn, member_id)["mobile"] is None
+    from services import attendance as attendance_service
+    assert attendance_service.todays_signin_count(conn, member_id) == 0
+    conn.close()
+
+
+def test_signin_save_phone_then_signs_in_member(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_savephone.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_savephone"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payments_service.mark_paid(conn, member_id, plan_id, admin_id)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+
+    at.text_input[0].input("Riley").run()
+    at.text_input(key=f"signin_phone_{member_id}").input("9000000333").run()
+    at.button(key=f"signin_save_phone_{member_id}").click().run()
+
+    assert not at.exception
+    assert not at.error
+    assert "signed in" in at.success[0].value.lower()
+
+    conn = db_module.get_connection()
+    assert members_service.get_member(conn, member_id)["mobile"] == "9000000333"
+    from services import attendance as attendance_service
+    assert attendance_service.todays_signin_count(conn, member_id) == 1
+    conn.close()

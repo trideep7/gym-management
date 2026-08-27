@@ -31,3 +31,5 @@ def test_help_page_renders_all_sections(tmp_path, monkeypatch):
     assert any("10 digits" in el.value for el in at.markdown)
     assert any("Upcoming Renewal" in el.value for el in at.markdown)
     assert any("Overdue Payment" in el.value for el in at.markdown)
+    assert any("Reactivating a member" in el.value for el in at.markdown)
+    assert any("Active Members" in el.value for el in at.markdown)

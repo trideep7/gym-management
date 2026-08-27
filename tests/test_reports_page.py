@@ -116,3 +116,35 @@ def test_generating_a_report_shows_personal_training_section(tmp_path, monkeypat
     assert metrics["Owed to Trainers"] == "₹2000.00"
     assert metrics["Gym Share"] == "₹1000.00"
     assert any(el.value == "Alex" for el in at.markdown)
+
+
+def test_personal_training_section_flags_unassigned_payouts(tmp_path, monkeypatch):
+    # mirrors the real post-import state: members paying for PT, no trainer
+    # roster yet. The money must still show up, clearly marked.
+    import db as db_module
+    from services import members, payments, trainers as trainers_service
+
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test6.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos6"))
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    member_id = members.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_pt": True}
+    )
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    trainers_service.mark_paid_with_pt(conn, member_id, plan_id, admin_id)
+    conn.close()
+
+    at = open_reports_page(tmp_path, monkeypatch, "test6.db", "photos6")
+    at.button[0].click().run()
+
+    assert not at.exception
+    metrics = {m.label: m.value for m in at.metric}
+    # the fee was collected, so it must not report as zero
+    assert metrics["PT Fees Collected"] == "₹3000.00"
+    assert metrics["Owed to Trainers"] == "₹2000.00"
+    assert metrics["Gym Share"] == "₹1000.00"
+    assert any("Not assigned to a trainer" in el.value for el in at.markdown)
+    assert any("without a trainer assigned" in el.value for el in at.caption)

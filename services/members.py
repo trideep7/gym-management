@@ -23,11 +23,22 @@ COLUMNS = [
 ]
 
 
+def _normalize_mobile(value):
+    """Blank/whitespace-only input means "no phone on file" — store that as
+    NULL, never as an empty string, so the two can't both mean the same
+    thing in the DB (the Dashboard's no-phone branch keys off NULL)."""
+    if value is None:
+        return None
+    trimmed = str(value).strip()
+    return trimmed or None
+
+
 def _validate(data):
     for field in REQUIRED_FIELDS:
         if not data.get(field):
             raise ValueError(f"{field} is required")
-    if data.get("mobile") and not MOBILE_PATTERN.match(data["mobile"]):
+    mobile = _normalize_mobile(data.get("mobile"))
+    if mobile and not MOBILE_PATTERN.match(mobile):
         raise ValueError("Mobile number must be exactly 10 digits and cannot start with 0")
 
 
@@ -35,6 +46,8 @@ def _column_value(col, data):
     value = data.get(col)
     if col in BOOLEAN_COLUMNS:
         return 1 if value else 0
+    if col == "mobile":
+        return _normalize_mobile(value)
     return value
 
 

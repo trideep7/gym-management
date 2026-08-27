@@ -176,3 +176,14 @@ def test_trainer_id_defaults_to_null_when_omitted(conn):
     member_id = members.create_member(conn, make_data(conn))
     fetched = members.get_member(conn, member_id)
     assert fetched["trainer_id"] is None
+
+
+def test_blank_mobile_is_stored_as_null_not_empty_string(conn):
+    # "" and NULL must not both mean "no phone" in the DB — find_by_mobile
+    # and the dashboard's no-phone branch both key off NULL
+    member_id = members.create_member(conn, make_data(conn, mobile=""))
+    assert members.get_member(conn, member_id)["mobile"] is None
+
+    existing = members.get_member(conn, member_id)
+    members.update_member(conn, member_id, {**existing, "mobile": "   "})
+    assert members.get_member(conn, member_id)["mobile"] is None

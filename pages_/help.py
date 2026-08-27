@@ -38,6 +38,17 @@ with st.expander("Members — Add, Edit, View, Search"):
    **Deactivate Member** if they've left the gym (this doesn't delete
    their record — history is kept).
 
+**Reactivating a member**
+1. Check **Show inactive members** in the search filters below — deactivated
+   members are hidden from the list by default.
+2. Find them, click **View**, then click **Reactivate Member** (the same
+   button, now relabeled, on their View screen).
+
+**What being "inactive" affects elsewhere**
+- Signing them in on the Dashboard shows a warning popup first, but you
+  can still choose to sign them in anyway.
+- They're excluded from the Dashboard's **Active Members** count.
+
 **Searching**
 - The search box matches name **or** mobile number. Use **Show inactive
   members** to include deactivated members in the results.

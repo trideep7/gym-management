@@ -140,14 +140,17 @@ def test_mark_paid_with_pt_no_payout_without_has_pt(conn):
     assert count == 0
 
 
-def test_mark_paid_with_pt_no_payout_without_trainer(conn):
+def test_mark_paid_with_pt_still_charges_when_no_trainer_assigned(conn):
+    # deliberate behaviour change: previously this logged nothing, which meant
+    # the gym collected the PT fee (charged off has_pt by _amount_for) while
+    # Reports showed 0. The payout is now recorded unattributed instead.
     member_id, _, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=False)
 
     result = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id)
 
-    assert result["pt_charged"] is False
+    assert result["pt_charged"] is True
     count = conn.execute("SELECT COUNT(*) AS c FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()["c"]
-    assert count == 0
+    assert count == 1
 
 
 def test_mark_paid_with_pt_stops_logging_after_has_pt_turned_off(conn):
@@ -195,3 +198,55 @@ def test_pt_summary_totals_across_all_trainers(conn):
     summary = trainers.pt_summary(conn, "2026-08-01", "2026-08-31")
 
     assert summary == {"total_fees": 3000, "total_trainer_share": 2000, "total_gym_share": 1000}
+
+
+def test_mark_paid_with_pt_logs_unattributed_payout_when_no_trainer_assigned(conn):
+    # The gym collects the PT fee off has_pt alone (services/payments._amount_for),
+    # so the payout has to be recorded even when nobody is assigned yet —
+    # otherwise the money is charged but reported as zero.
+    member_id, _, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=False)
+
+    result = trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 1))
+
+    assert result["pt_charged"] is True
+    tp = conn.execute("SELECT * FROM trainer_payments WHERE member_id = ?", (member_id,)).fetchone()
+    assert tp["trainer_id"] is None
+    assert tp["amount"] == 3000
+    assert tp["trainer_share"] == 2000
+
+
+def test_pt_summary_includes_unattributed_payouts(conn):
+    member_id, _, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=False)
+    trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 5))
+
+    summary = trainers.pt_summary(conn, "2026-08-01", "2026-08-31")
+
+    assert summary == {"total_fees": 3000, "total_trainer_share": 2000, "total_gym_share": 1000}
+
+
+def test_trainer_payouts_reports_unassigned_bucket(conn):
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
+    trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 5))
+
+    other = members.create_member(
+        conn, {"first_name": "Riley", "mobile": "9000000222", "plan_id": plan_id, "has_pt": True}
+    )
+    trainers.mark_paid_with_pt(conn, other, plan_id, user_id, paid_on=datetime.date(2026, 8, 6))
+
+    payouts = trainers.trainer_payouts(conn, "2026-08-01", "2026-08-31")
+
+    named = {p["trainer_name"]: p["amount_owed"] for p in payouts if p["trainer_id"] is not None}
+    unassigned = [p for p in payouts if p["trainer_id"] is None]
+    assert named["Alex"] == 2000
+    assert len(unassigned) == 1
+    assert unassigned[0]["amount_owed"] == 2000
+    assert unassigned[0]["trainer_name"] is None
+
+
+def test_trainer_payouts_omits_unassigned_bucket_when_all_attributed(conn):
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
+    trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 5))
+
+    payouts = trainers.trainer_payouts(conn, "2026-08-01", "2026-08-31")
+
+    assert all(p["trainer_id"] is not None for p in payouts)

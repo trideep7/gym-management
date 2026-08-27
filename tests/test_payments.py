@@ -26,6 +26,56 @@ def test_mark_paid_then_status_is_paid(conn):
     assert status["valid_until"] == (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
 
 
+def test_mark_paid_adds_locker_fee_scaled_to_plan_duration(conn):
+    plan_id = payments.create_plan(conn, "6 Months", 5000.0, 180)
+    member_id = members.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_locker": True}
+    )
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    history = payments.payment_history(conn, member_id)
+    assert history[0]["amount"] == 5000.0 + 100 * 6
+
+
+def test_mark_paid_adds_pt_fee_scaled_to_plan_duration(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    member_id = members.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_pt": True}
+    )
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    history = payments.payment_history(conn, member_id)
+    assert history[0]["amount"] == 1000.0 + 3000
+
+
+def test_mark_paid_adds_both_locker_and_pt_fees(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    member_id = members.create_member(
+        conn,
+        {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_locker": True, "has_pt": True},
+    )
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    history = payments.payment_history(conn, member_id)
+    assert history[0]["amount"] == 1000.0 + 100 + 3000
+
+
+def test_mark_paid_without_locker_or_pt_charges_plan_amount_only(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    history = payments.payment_history(conn, member_id)
+    assert history[0]["amount"] == 1500.0
+
+
+def test_quote_amount_matches_what_mark_paid_will_charge(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    member_id = members.create_member(
+        conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "has_locker": True}
+    )
+    assert payments.quote_amount(conn, member_id, plan_id) == 1100.0
+
+
 def test_status_is_overdue_after_plan_expires(conn):
     member_id, user_id = setup_member_and_user(conn)
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
@@ -115,6 +165,87 @@ def test_payment_history_respects_limit(conn):
     # newest first — the 8th payment (i=7) was paid latest
     assert history[0]["paid_on"] == (base + datetime.timedelta(days=7 * 30)).isoformat()
     assert history[5]["paid_on"] == (base + datetime.timedelta(days=2 * 30)).isoformat()
+
+
+def test_revenue_by_day_groups_by_paid_on_date(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 10))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 10))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 12))
+
+    by_day = payments.revenue_by_day(conn, "2026-08-01", "2026-08-31")
+
+    assert by_day == [
+        {"date": "2026-08-10", "total": 3000.0},
+        {"date": "2026-08-12", "total": 1500.0},
+    ]
+
+
+def test_revenue_by_month_groups_and_orders_chronologically(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 6, 5))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 3))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 20))
+
+    by_month = payments.revenue_by_month(conn, "2026-06-01", "2026-08-31")
+
+    assert by_month == [
+        {"month": "2026-06", "total": 1500.0},
+        {"month": "2026-08", "total": 3000.0},
+    ]
+
+
+def test_due_amounts_splits_active_and_inactive_members(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    members.create_member(conn, {"first_name": "ActiveUnpaid", "mobile": "9000000001", "plan_id": plan_id})
+    inactive_unpaid = members.create_member(conn, {"first_name": "InactiveUnpaid", "mobile": "9000000002", "plan_id": plan_id})
+    members.set_member_active(conn, inactive_unpaid, False)
+    paid_member = members.create_member(conn, {"first_name": "Paid", "mobile": "9000000003", "plan_id": plan_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    payments.mark_paid(conn, paid_member, plan_id, user_id)
+
+    due = payments.due_amounts(conn)
+
+    assert due == {"active": 1500.0, "inactive": 1500.0}
+
+
+def test_due_amounts_includes_locker_and_pt_surcharges(conn):
+    # what's "due" must match what Mark Paid will actually charge, otherwise
+    # the Reports due figures understate by the add-on fees
+    plan_id = payments.create_plan(conn, "Monthly", 1000.0, 30)
+    members.create_member(
+        conn, {"first_name": "Plain", "mobile": "9000000001", "plan_id": plan_id}
+    )
+    members.create_member(
+        conn, {"first_name": "Locker", "mobile": "9000000002", "plan_id": plan_id, "has_locker": True}
+    )
+    members.create_member(
+        conn, {"first_name": "PT", "mobile": "9000000003", "plan_id": plan_id, "has_pt": True}
+    )
+    members.create_member(
+        conn,
+        {"first_name": "Both", "mobile": "9000000004", "plan_id": plan_id, "has_locker": True, "has_pt": True},
+    )
+
+    due = payments.due_amounts(conn)
+
+    # 1000 + (1000+100) + (1000+3000) + (1000+100+3000)
+    assert due["active"] == 1000.0 + 1100.0 + 4000.0 + 4100.0
+    assert due["inactive"] == 0
+
+
+def test_due_amounts_scales_surcharges_by_plan_duration(conn):
+    plan_id = payments.create_plan(conn, "6 Months", 5000.0, 180)
+    members.create_member(
+        conn,
+        {"first_name": "Sam", "mobile": "9000000001", "plan_id": plan_id, "has_locker": True, "has_pt": True},
+    )
+
+    due = payments.due_amounts(conn)
+
+    assert due["active"] == 5000.0 + (100 * 6) + (3000 * 6)
 
 
 def test_upcoming_expirations_includes_only_paid_members_expiring_within_window(conn):
