@@ -6,17 +6,56 @@ import streamlit as st
 
 import db
 from services import reports as reports_service
-from utils.dates import format_date
+from utils.dates import format_date, preset_range
 
 conn = db.get_connection()
 
 st.title("Reports")
 
 today = datetime.date.today()
-start_date = st.date_input(
-    "From", value=today - datetime.timedelta(days=6), key="report_start", format="DD-MM-YYYY"
+
+stats = reports_service.overview_stats(conn, today)
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Revenue This Month", f"₹{stats['revenue_this_month']:.2f}")
+col2.metric("Revenue This Year", f"₹{stats['revenue_this_year']:.2f}")
+col3.metric("Active Members", stats["active_members"])
+
+col4, col5, col6 = st.columns(3)
+col4.metric("Payments Overdue", stats["payments_overdue"])
+col5.metric("Due (Active)", f"₹{stats['due_active']:.2f}")
+col6.metric("Due (Inactive)", f"₹{stats['due_inactive']:.2f}")
+
+st.subheader("Last 12 Months Revenue")
+trend = reports_service.monthly_revenue_trend(conn, today)
+trend_df = pd.DataFrame(trend)
+trend_df["month_label"] = trend_df["month"].apply(
+    lambda m: datetime.datetime.strptime(m, "%Y-%m").strftime("%b %Y")
 )
-end_date = st.date_input("To", value=today, key="report_end", format="DD-MM-YYYY")
+# same reasoning as the range charts below: pin the axis to chronological
+# order rather than Altair's alphabetical default.
+month_order = list(trend_df["month_label"])
+bar_size = min(40, max(8, 300 // len(trend_df)))
+trend_chart = (
+    alt.Chart(trend_df)
+    .mark_bar(size=bar_size)
+    .encode(x=alt.X("month_label:O", title="Month", sort=month_order), y=alt.Y("total:Q", title="Revenue"))
+)
+st.altair_chart(trend_chart, use_container_width=True)
+
+st.divider()
+
+PRESETS = ["Today", "Yesterday", "Last 7 Days", "This Month", "Last Month", "This Year", "Custom"]
+preset = st.selectbox("Date Range", PRESETS, index=2, key="report_preset")
+
+if preset == "Custom":
+    start_date = st.date_input(
+        "From", value=today - datetime.timedelta(days=6), key="report_start", format="DD-MM-YYYY"
+    )
+    end_date = st.date_input("To", value=today, key="report_end", format="DD-MM-YYYY")
+else:
+    start_date, end_date = preset_range(preset, today)
+    st.caption(f"{format_date(start_date)} to {format_date(end_date)}")
 
 if st.button("Generate"):
     if start_date > end_date:
@@ -50,17 +89,37 @@ else:
     else:
         st.write("No sign-ins in this date range.")
 
-    st.subheader("Payment Status")
-    summary = reports_service.payment_summary(conn)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Paid", summary["paid"])
-    col2.metric("Overdue", summary["overdue"])
-    col3.metric("No Payment Yet", summary["no_payment"])
-    if summary["overdue_members"]:
-        st.write("Overdue members:")
-        for m in summary["overdue_members"]:
-            st.write(f"- {m['first_name']} {m['surname'] or ''} ({m['mobile']})")
-    if summary["no_payment_members"]:
-        st.write("No payment yet:")
-        for m in summary["no_payment_members"]:
-            st.write(f"- {m['first_name']} {m['surname'] or ''} ({m['mobile']})")
+    st.subheader("Revenue Collected")
+    daily_revenue = reports_service.daily_revenue(conn, range_start.isoformat(), range_end.isoformat())
+    if daily_revenue:
+        revenue_df = pd.DataFrame(daily_revenue)
+        revenue_df["date"] = revenue_df["date"].apply(format_date)
+        date_order = list(revenue_df["date"])
+        bar_size = min(40, max(8, 300 // len(revenue_df)))
+        revenue_chart = (
+            alt.Chart(revenue_df)
+            .mark_bar(size=bar_size)
+            .encode(x=alt.X("date:O", title="Date", sort=date_order), y=alt.Y("total:Q", title="Revenue"))
+        )
+        st.altair_chart(revenue_chart, use_container_width=True)
+    else:
+        st.write("No payments collected in this date range.")
+
+    st.subheader("Personal Training")
+    pt = reports_service.pt_summary(conn, range_start.isoformat(), range_end.isoformat())
+    col_pt1, col_pt2, col_pt3 = st.columns(3)
+    col_pt1.metric("PT Fees Collected", f"₹{pt['total_fees']:.2f}")
+    col_pt2.metric("Owed to Trainers", f"₹{pt['total_trainer_share']:.2f}")
+    col_pt3.metric("Gym Share", f"₹{pt['total_gym_share']:.2f}")
+
+    payouts = reports_service.trainer_payouts(conn, range_start.isoformat(), range_end.isoformat())
+    if payouts:
+        payout_header = st.columns([3, 2])
+        payout_header[0].markdown("**Trainer**")
+        payout_header[1].markdown("**Amount Owed**")
+        for p in payouts:
+            payout_row = st.columns([3, 2])
+            payout_row[0].write(p["trainer_name"])
+            payout_row[1].write(f"₹{p['amount_owed']:.2f}")
+    else:
+        st.write("No trainers added yet.")
