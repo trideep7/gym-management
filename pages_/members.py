@@ -10,6 +10,7 @@ from services import payments as payments_service
 from services import reminders as reminders_service
 from services import settings as settings_service
 from services import trainers as trainers_service
+from utils import time_slots
 from utils.dates import format_date, format_time
 from utils.errors import report_unexpected_error, safe_action
 
@@ -18,12 +19,6 @@ user = st.session_state.user
 
 st.title("Members")
 
-TIME_SLOTS = [
-    "6:00 AM - 8:00 AM",
-    "8:00 AM - 10:00 AM",
-    "10:00 AM - 4:00 PM",
-    "4:00 PM - 6:00 PM",
-]
 GENDERS = ["Female", "Male", "Other"]
 
 
@@ -108,8 +103,15 @@ def member_form(key_prefix, existing=None):
     data["how_found_us"] = st.text_area(
         "How do you find our Gym, any feedback?", value=existing.get("how_found_us", ""), key=f"{key_prefix}_how_found"
     )
-    slot_index = TIME_SLOTS.index(existing["preferred_time_slot"]) if existing.get("preferred_time_slot") in TIME_SLOTS else 0
-    data["preferred_time_slot"] = st.selectbox("Preferred Timing", TIME_SLOTS, index=slot_index, key=f"{key_prefix}_time_slot")
+    current_slot = existing.get("preferred_time_slot")
+    slot_options = time_slots.options_for(current_slot)
+    data["preferred_time_slot"] = time_slots.to_stored(
+        st.selectbox(
+            "Preferred Timing", slot_options,
+            index=time_slots.index_of(current_slot, slot_options),
+            key=f"{key_prefix}_time_slot",
+        )
+    )
 
     st.subheader("Medical Questionnaire")
     st.write("Have you ever or do you have any of the following?")

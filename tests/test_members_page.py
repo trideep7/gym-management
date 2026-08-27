@@ -805,3 +805,101 @@ def test_saving_a_member_over_the_locker_limit_shows_a_friendly_error(tmp_path, 
 
     assert not at.exception
     assert any("lockers are in use" in el.value for el in at.error)
+
+
+def test_member_time_slot_offers_the_same_options_as_the_trainer_form(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_slots_m1.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_slots_m1"))
+    import db as db_module
+    from services import payments as payments_service
+    from utils import time_slots
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key="show_add_member_button").click().run()
+
+    assert not at.exception
+    assert at.selectbox(key="add_time_slot").options == [time_slots.NOT_SET] + time_slots.TIME_SLOTS
+
+
+def test_a_new_member_with_no_slot_chosen_is_stored_without_one(tmp_path, monkeypatch):
+    # the form used to default to the first slot, silently assigning
+    # everyone a 6-8 AM preference they never picked
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_slots_m2.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_slots_m2"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key="show_add_member_button").click().run()
+    at.text_input(key="add_first_name").input("Asha").run()
+    at.button(key="save_new_member").click().run()
+
+    assert not at.exception
+    check = db_module.get_connection()
+    assert members_service.search_members(check, "Asha")[0]["preferred_time_slot"] is None
+    check.close()
+
+
+def test_editing_a_member_with_no_slot_does_not_invent_one(tmp_path, monkeypatch):
+    # every imported member has a NULL slot; opening and saving their
+    # record must not stamp them with the first option
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_slots_m3.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_slots_m3"))
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(
+        conn, {"first_name": "Ravi", "mobile": "9000000801", "plan_id": plan_id}
+    )
+    conn.execute("UPDATE members SET preferred_time_slot = NULL WHERE id = ?", (member_id,))
+    conn.commit()
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key=f"view_button_{member_id}").click().run()
+    at.button(key=f"edit_from_view_{member_id}").click().run()
+
+    assert at.selectbox(key=f"edit_{member_id}_time_slot").value == "Not set"
+
+    at.button(key=f"save_edit_{member_id}").click().run()
+
+    assert not at.exception
+    check = db_module.get_connection()
+    assert members_service.get_member(check, member_id)["preferred_time_slot"] is None
+    check.close()
