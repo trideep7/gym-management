@@ -294,7 +294,7 @@ elif st.session_state.viewing_member_id is not None:
         st.write("No payments recorded yet.")
 
     st.subheader("Recent Sign-Ins")
-    signin_history = attendance_service.member_history(conn, member_id, limit=3)
+    signin_history = attendance_service.member_history(conn, member_id, limit=10)
     if signin_history:
         signin_header = st.columns([1, 1])
         signin_header[0].markdown("**Date**")

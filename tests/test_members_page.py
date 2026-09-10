@@ -484,7 +484,7 @@ def test_view_screen_shows_contact_info_and_payment_history(tmp_path, monkeypatc
     assert at.button(key=f"toggle_active_view_{member_id}")
 
 
-def test_view_screen_shows_last_3_signins(tmp_path, monkeypatch):
+def test_view_screen_shows_last_10_signins(tmp_path, monkeypatch):
     monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test18.db"))
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos18"))
     import datetime
@@ -501,7 +501,7 @@ def test_view_screen_shows_last_3_signins(tmp_path, monkeypatch):
     member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
     admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
     base = datetime.datetime(2026, 8, 1, 9, 0, 0)
-    for i in range(5):
+    for i in range(12):
         attendance_service.sign_in(conn, member_id, admin_id, when=base + datetime.timedelta(days=i))
     conn.close()
 
@@ -520,8 +520,8 @@ def test_view_screen_shows_last_3_signins(tmp_path, monkeypatch):
     # Date and Time as separate columns with a header row
     assert "**Date**" in markdown_values
     assert "**Time**" in markdown_values
-    # newest of the 5 sign-ins (Aug 5) shown, oldest two (Aug 1, Aug 2) not
-    assert "05-Aug-2026" in markdown_values
+    # newest of the 12 sign-ins (Aug 12) shown, oldest two (Aug 1, Aug 2) not
+    assert "12-Aug-2026" in markdown_values
     assert "09:00 AM" in markdown_values
     assert not any("01-Aug-2026" in v for v in markdown_values)
     assert not any("02-Aug-2026" in v for v in markdown_values)
