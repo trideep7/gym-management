@@ -1,6 +1,7 @@
 import streamlit as st
 
 import db
+from services import time_slots as time_slots_service
 from services import trainers as trainers_service
 from utils import time_slots
 from utils.errors import safe_action
@@ -15,24 +16,7 @@ if "editing_trainer_id" not in st.session_state:
 if st.session_state.get("trainer_flash"):
     st.success(st.session_state.pop("trainer_flash"))
 
-with st.form("new_trainer_form", clear_on_submit=True):
-    name = st.text_input("Name", key="trainer_name")
-    mobile = st.text_input("Mobile", key="trainer_mobile")
-    time_slot = st.selectbox(
-        "Time Slot", time_slots.options_for(None), key="trainer_time_slot"
-    )
-    if st.form_submit_button("Add Trainer", key="add_trainer_button"):
-        if name:
-            ok, _ = safe_action(
-                lambda: trainers_service.create_trainer(
-                    conn, name, mobile, time_slots.to_stored(time_slot)
-                )
-            )
-            if ok:
-                st.session_state.trainer_flash = f"Added '{name}'."
-                st.rerun()
-        else:
-            st.error("Name is required.")
+available_time_slots = [s["label"] for s in time_slots_service.list_time_slots(conn)]
 
 trainer_list = trainers_service.list_trainers(conn)
 if not trainer_list:
@@ -53,7 +37,7 @@ else:
             edited_mobile = edit_cols[1].text_input(
                 "Mobile", value=trainer["mobile"] or "", key=f"edit_trainer_mobile_{trainer['id']}", label_visibility="collapsed"
             )
-            slot_options = time_slots.options_for(trainer["time_slot"])
+            slot_options = time_slots.options_for(trainer["time_slot"], available_time_slots)
             edited_time_slot = edit_cols[2].selectbox(
                 "Time Slot", slot_options,
                 index=time_slots.index_of(trainer["time_slot"], slot_options),
@@ -92,3 +76,23 @@ else:
                     else:
                         st.session_state.trainer_flash = f"Trainer '{trainer['name']}' deleted."
                     st.rerun()
+
+with st.expander("Add Trainer"):
+    with st.form("new_trainer_form", clear_on_submit=True):
+        name = st.text_input("Name", key="trainer_name")
+        mobile = st.text_input("Mobile", key="trainer_mobile")
+        time_slot = st.selectbox(
+            "Time Slot", time_slots.options_for(None, available_time_slots), key="trainer_time_slot"
+        )
+        if st.form_submit_button("Add Trainer", key="add_trainer_button"):
+            if name:
+                ok, _ = safe_action(
+                    lambda: trainers_service.create_trainer(
+                        conn, name, mobile, time_slots.to_stored(time_slot)
+                    )
+                )
+                if ok:
+                    st.session_state.trainer_flash = f"Added '{name}'."
+                    st.rerun()
+            else:
+                st.error("Name is required.")

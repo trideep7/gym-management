@@ -243,6 +243,26 @@ def test_trainer_payouts_reports_unassigned_bucket(conn):
     assert unassigned[0]["trainer_name"] is None
 
 
+def test_mark_paid_with_pt_threads_payment_method_to_the_membership_payment(conn):
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
+
+    trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, payment_method="online")
+
+    payment = conn.execute("SELECT payment_method FROM payments WHERE member_id = ?", (member_id,)).fetchone()
+    assert payment["payment_method"] == "online"
+
+
+def test_mark_paid_with_pt_leaves_the_trainer_payout_without_a_payment_method(conn):
+    # payment method is tracked on the membership payment only -- the linked
+    # PT payout has no column for it
+    member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
+
+    trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, payment_method="online")
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(trainer_payments)")}
+    assert "payment_method" not in cols
+
+
 def test_trainer_payouts_omits_unassigned_bucket_when_all_attributed(conn):
     member_id, trainer_id, plan_id, user_id = setup_member_trainer_and_user(conn, has_pt=True, assign_trainer=True)
     trainers.mark_paid_with_pt(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 5))

@@ -77,12 +77,17 @@ def test_delete_trainer_removes_from_list(tmp_path, monkeypatch):
 
 
 def test_trainer_time_slot_offers_the_same_options_as_the_member_form(tmp_path, monkeypatch):
+    import db as db_module
+    from services import time_slots as time_slots_service
     from utils import time_slots
 
     at = open_trainers_page(tmp_path, monkeypatch, "slots1.db", "photos_slots1")
 
     assert not at.exception
-    assert at.selectbox(key="trainer_time_slot").options == [time_slots.NOT_SET] + time_slots.TIME_SLOTS
+    check = db_module.get_connection()
+    expected_labels = [s["label"] for s in time_slots_service.list_time_slots(check)]
+    check.close()
+    assert at.selectbox(key="trainer_time_slot").options == [time_slots.NOT_SET] + expected_labels
 
 
 def test_adding_a_trainer_without_a_slot_stores_no_slot(tmp_path, monkeypatch):

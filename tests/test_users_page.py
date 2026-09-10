@@ -30,6 +30,40 @@ def test_admin_can_create_staff_user(tmp_path, monkeypatch):
     # cannot observe through session_state, so it can't be asserted here.
 
 
+def test_admin_can_reset_a_users_password(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_reset.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_reset"))
+    import db as db_module
+    from services import auth as auth_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    staff_id = auth_service.create_user(conn, "frontdesk3", "oldpassword", "Front Desk Three", "staff")
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/users.py")
+    at.run()
+
+    at.selectbox(key="reset_target").select(staff_id).run()
+    at.text_input(key="reset_new_password").input("newpassword").run()
+    at.button(key="FormSubmitter:reset_password_form-Reset Password").click().run()
+
+    assert not at.exception
+    assert "reset" in at.success[0].value.lower()
+
+    import db as db_module
+
+    check = db_module.get_connection()
+    assert auth_service.authenticate(check, "frontdesk3", "newpassword") is not None
+    check.close()
+
+
 def test_staff_cannot_access_users_page(tmp_path, monkeypatch):
     # st.navigation already hides this page from staff (they can never
     # switch_page into it through app.py's own routing) — this test targets

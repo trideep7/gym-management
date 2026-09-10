@@ -26,6 +26,10 @@ def preset_range(preset, today=None):
         return yesterday, yesterday
     if preset == "Last 7 Days":
         return today - datetime.timedelta(days=6), today
+    if preset == "Last 30 Days":
+        return today - datetime.timedelta(days=29), today
+    if preset == "Last 90 Days":
+        return today - datetime.timedelta(days=89), today
     if preset == "This Month":
         return today.replace(day=1), today
     if preset == "Last Month":

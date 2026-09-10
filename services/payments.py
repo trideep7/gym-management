@@ -5,6 +5,13 @@ from services import settings as settings_service
 LOCKER_MONTHLY_FEE = 100
 PT_MONTHLY_FEE = 3000
 
+PAYMENT_METHODS = ("online", "offline")
+
+
+def _validate_payment_method(payment_method):
+    if payment_method is not None and payment_method not in PAYMENT_METHODS:
+        raise ValueError(f"Payment method must be one of {PAYMENT_METHODS}, got {payment_method!r}")
+
 
 def create_plan(conn, name, amount, duration_days):
     cursor = conn.execute(
@@ -118,7 +125,8 @@ def _period_start_for(conn, member_id, paid_on_date):
     return previous_end + datetime.timedelta(days=1)
 
 
-def mark_paid(conn, member_id, plan_id, recorded_by, paid_on=None):
+def mark_paid(conn, member_id, plan_id, recorded_by, paid_on=None, payment_method=None):
+    _validate_payment_method(payment_method)
     plan = conn.execute("SELECT * FROM membership_plans WHERE id = ?", (plan_id,)).fetchone()
     if plan is None:
         raise ValueError(f"No plan with id {plan_id}")
@@ -136,16 +144,80 @@ def mark_paid(conn, member_id, plan_id, recorded_by, paid_on=None):
     amount = _amount_for(plan, member)
     period_start = _period_start_for(conn, member_id, paid_on_date)
     valid_until = period_start + datetime.timedelta(days=plan["duration_days"])
+    now = datetime.datetime.now().isoformat()
     cursor = conn.execute(
-        "INSERT INTO payments (member_id, plan_id, amount, paid_on, period_start, valid_until, recorded_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO payments (member_id, plan_id, amount, paid_on, period_start, valid_until, recorded_by, "
+        "payment_method, created_at, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             member_id, plan_id, amount, paid_on_date.isoformat(),
-            period_start.isoformat(), valid_until.isoformat(), recorded_by,
+            period_start.isoformat(), valid_until.isoformat(), recorded_by, payment_method, now, now, recorded_by,
         ),
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def update_payment(conn, payment_id, payment_method, paid_on, amount, plan_id=None, updated_by=None):
+    """Correct an existing payment's amount, method, date, and/or plan.
+
+    The date and plan are the only two things that can move this
+    payment's own period. Leaving both unchanged leaves period_start/
+    valid_until untouched too -- an early renewal's chained period_start
+    must survive a method-only correction. Changing either recalculates
+    the period from period_start (the new date if it changed, otherwise
+    the existing anchor) plus the (possibly corrected) plan's duration.
+    It never reaches into any other payment's chained dates.
+
+    plan_id=None (the default) keeps the payment's existing plan.
+    updated_by names who made this specific edit -- distinct from
+    recorded_by, which never changes after the payment is first created.
+    Left as None (the honest "no known actor" answer) unless the caller
+    passes the acting user's id.
+    """
+    _validate_payment_method(payment_method)
+    if float(amount) < 0:
+        raise ValueError("Amount can't be negative.")
+    payment = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
+    if payment is None:
+        raise ValueError(f"No payment with id {payment_id}")
+    target_plan_id = payment["plan_id"] if plan_id is None else plan_id
+    plan = conn.execute("SELECT * FROM membership_plans WHERE id = ?", (target_plan_id,)).fetchone()
+    if plan is None:
+        raise ValueError(f"No plan with id {target_plan_id}")
+
+    if isinstance(paid_on, str):
+        paid_on_date = datetime.date.fromisoformat(paid_on)
+    else:
+        paid_on_date = paid_on
+    paid_on_str = paid_on_date.isoformat()
+
+    date_changed = paid_on_str != payment["paid_on"]
+    plan_changed = target_plan_id != payment["plan_id"]
+
+    if date_changed or plan_changed:
+        period_start = paid_on_date if date_changed else datetime.date.fromisoformat(payment["period_start"])
+        valid_until = period_start + datetime.timedelta(days=plan["duration_days"])
+        period_start_str, valid_until_str = period_start.isoformat(), valid_until.isoformat()
+    else:
+        period_start_str, valid_until_str = payment["period_start"], payment["valid_until"]
+
+    conn.execute(
+        "UPDATE payments SET payment_method = ?, paid_on = ?, period_start = ?, valid_until = ?, amount = ?, "
+        "plan_id = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+        (
+            payment_method, paid_on_str, period_start_str, valid_until_str, float(amount),
+            target_plan_id, datetime.datetime.now().isoformat(), updated_by, payment_id,
+        ),
+    )
+    conn.commit()
+
+
+def delete_payment(conn, payment_id):
+    if conn.execute("SELECT 1 FROM payments WHERE id = ?", (payment_id,)).fetchone() is None:
+        raise ValueError(f"No payment with id {payment_id}")
+    conn.execute("DELETE FROM payments WHERE id = ?", (payment_id,))
+    conn.commit()
 
 
 def get_status(conn, member_id):
@@ -160,12 +232,30 @@ def get_status(conn, member_id):
     return {"status": status, "valid_until": row["valid_until"], "last_payment": dict(row)}
 
 
-def revenue_since(conn, since_date):
+def revenue_between(conn, start_date, end_date):
     row = conn.execute(
-        "SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE paid_on >= ?",
-        (since_date,),
+        "SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE paid_on >= ? AND paid_on <= ?",
+        (start_date, end_date),
     ).fetchone()
     return row["total"]
+
+
+def payment_method_breakdown(conn, start_date, end_date):
+    """Revenue in the range, split by how it was paid.
+
+    A payment recorded before payment_method existed (or never given one)
+    is bucketed as "unspecified" rather than dropped, so the three
+    figures always add up to revenue_between() for the same range.
+    """
+    rows = conn.execute(
+        "SELECT COALESCE(payment_method, 'unspecified') AS method, COALESCE(SUM(amount), 0) AS total "
+        "FROM payments WHERE paid_on >= ? AND paid_on <= ? GROUP BY method",
+        (start_date, end_date),
+    ).fetchall()
+    totals = {"online": 0, "offline": 0, "unspecified": 0}
+    for row in rows:
+        totals[row["method"]] = row["total"]
+    return totals
 
 
 def revenue_by_day(conn, start_date, end_date):
@@ -238,4 +328,29 @@ def payment_history(conn, member_id, limit=None):
         sql += " LIMIT ?"
         params.append(limit)
     rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def recent_payments(conn, since_date, until_date):
+    """Payments added or edited within the given range, newest activity first.
+
+    Filtered on updated_at (not paid_on) -- an edit that doesn't change
+    the paid-on date still counts as recent activity. A row with no
+    timestamp (recorded before activity tracking existed) never matches
+    any range rather than being treated as "just happened".
+    """
+    rows = conn.execute(
+        "SELECT payments.*, membership_plans.name AS plan_name, "
+        "members.first_name AS member_first_name, members.surname AS member_surname, "
+        "members.mobile AS member_mobile, "
+        "users.role AS updated_by_role, users.full_name AS updated_by_name "
+        "FROM payments "
+        "JOIN membership_plans ON payments.plan_id = membership_plans.id "
+        "JOIN members ON payments.member_id = members.id "
+        "LEFT JOIN users ON payments.updated_by = users.id "
+        "WHERE payments.updated_at IS NOT NULL "
+        "AND date(payments.updated_at) >= ? AND date(payments.updated_at) <= ? "
+        "ORDER BY payments.updated_at DESC",
+        (since_date, until_date),
+    ).fetchall()
     return [dict(r) for r in rows]

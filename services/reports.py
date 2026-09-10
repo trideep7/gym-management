@@ -83,20 +83,39 @@ def monthly_revenue_trend(conn, today=None, months=12):
     return [{"month": key, "total": totals_by_month.get(key, 0)} for key in _month_keys(start, today)]
 
 
+def _month_end(d):
+    if d.month == 12:
+        next_month_first = datetime.date(d.year + 1, 1, 1)
+    else:
+        next_month_first = datetime.date(d.year, d.month + 1, 1)
+    return next_month_first - datetime.timedelta(days=1)
+
+
 def overview_stats(conn, today=None):
     today = today or datetime.date.today()
-    month_start = today.replace(day=1).isoformat()
-    year_start = today.replace(month=1, day=1).isoformat()
+    month_start = today.replace(day=1)
+    month_end = _month_end(today)
+    year_start = today.replace(month=1, day=1)
+    year_end = today.replace(month=12, day=31)
     three_months_ago = (today - datetime.timedelta(days=90)).isoformat()
     due = due_summary(conn)
     return {
-        "revenue_this_month": payments.revenue_since(conn, month_start),
-        "revenue_this_year": payments.revenue_since(conn, year_start),
+        # bounded on both ends -- a member paying ahead for a future cycle
+        # must not inflate this month's (or year's) total before that
+        # period actually arrives
+        "revenue_this_month": payments.revenue_between(conn, month_start.isoformat(), month_end.isoformat()),
+        "revenue_this_year": payments.revenue_between(conn, year_start.isoformat(), year_end.isoformat()),
         "active_members": attendance.active_since_count(conn, three_months_ago),
         "payments_overdue": payment_summary(conn)["overdue"],
         "due_active": due["active"],
-        "due_inactive": due["inactive"],
     }
+
+
+def payment_method_breakdown_this_month(conn, today=None):
+    today = today or datetime.date.today()
+    month_start = today.replace(day=1)
+    month_end = _month_end(today)
+    return payments.payment_method_breakdown(conn, month_start.isoformat(), month_end.isoformat())
 
 
 def pt_summary(conn, start_date, end_date):

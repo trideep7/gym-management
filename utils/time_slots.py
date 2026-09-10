@@ -1,8 +1,9 @@
-"""The gym's timetable slots, shared by the member and trainer forms.
+"""Dropdown shaping shared by the member and trainer forms.
 
-Both pick from the same list, so a trainer's slot and a member's
-preferred slot are directly comparable rather than being two sets of
-free text that happen to look alike.
+The canonical timing options themselves are admin-managed and stored via
+services.time_slots; this module only turns a list of active labels into
+selectbox options, so it stays a plain function with no database
+dependency of its own.
 """
 
 # A plain string rather than Python None: streamlit.testing.v1 can't
@@ -11,22 +12,16 @@ free text that happen to look alike.
 # on the way into the database by to_stored().
 NOT_SET = "Not set"
 
-TIME_SLOTS = [
-    "6:00 AM - 8:00 AM",
-    "8:00 AM - 10:00 AM",
-    "10:00 AM - 4:00 PM",
-    "4:00 PM - 6:00 PM",
-]
 
-
-def options_for(current):
+def options_for(current, available_labels):
     """Dropdown options for a record whose slot is `current`.
 
     A value that isn't one of the canonical slots is kept as an option of
     its own, so opening a form and saving it can't silently rewrite a
-    slot nobody meant to change.
+    slot nobody meant to change -- including one that's since been
+    renamed or deactivated by an admin.
     """
-    options = [NOT_SET] + TIME_SLOTS
+    options = [NOT_SET] + list(available_labels)
     if current and current not in options:
         options.insert(1, current)
     return options

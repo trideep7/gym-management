@@ -527,6 +527,261 @@ def test_view_screen_shows_last_3_signins(tmp_path, monkeypatch):
     assert not any("02-Aug-2026" in v for v in markdown_values)
 
 
+# --- editing a payment from the member view screen -----------------------
+
+def _open_view_with_one_payment(tmp_path, monkeypatch, name, payment_method=None, paid_on=None):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / f"{name}.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / f"photos_{name}"))
+    import datetime
+
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    paid_on = paid_on or datetime.date(2026, 1, 15)
+    payment_id = payments_service.mark_paid(
+        conn, member_id, plan_id, admin_id, paid_on=paid_on, payment_method=payment_method
+    )
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key=f"view_button_{member_id}").click().run()
+
+    return at, member_id, payment_id, paid_on
+
+
+def test_view_screen_shows_payment_method_column(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(
+        tmp_path, monkeypatch, "editpay1", payment_method="online"
+    )
+
+    assert not at.exception
+    markdown_values = [el.value for el in at.markdown]
+    assert "**Method**" in markdown_values
+    assert "Online" in markdown_values
+    assert at.button(key=f"edit_payment_{payment_id}")
+
+
+def test_view_screen_shows_a_dash_for_payments_with_no_recorded_method(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(tmp_path, monkeypatch, "editpay2")
+
+    assert not at.exception
+    assert "—" in [el.value for el in at.markdown]
+
+
+def test_edit_payment_opens_a_form_prefilled_with_existing_values(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(
+        tmp_path, monkeypatch, "editpay3", payment_method="offline"
+    )
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    # the Selectbox wrapper's .options are format_func'd display labels,
+    # but .value/.select() operate on the raw option (the plan id) --
+    # with only one plan on file, its label being the sole option is
+    # enough to prove it's showing (and thus selecting) the right plan
+    assert at.selectbox(key=f"edit_plan_{payment_id}").options == ["Monthly"]
+    assert at.number_input(key=f"edit_amount_{payment_id}").value == 1500.0
+    assert at.date_input(key=f"edit_paid_on_{payment_id}").value == paid_on
+    assert at.radio(key=f"edit_payment_method_{payment_id}").value == "Offline"
+    assert at.button(key=f"save_payment_{payment_id}")
+    assert at.button(key=f"delete_payment_{payment_id}")
+    assert at.button(key=f"cancel_edit_payment_{payment_id}")
+
+
+def test_edit_payment_can_change_the_plan(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "editplan1.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_editplan1"))
+    import datetime
+
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    monthly_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    registration_id = payments_service.create_plan(conn, "Registration (3-Month)", 4000.0, 90)
+    member_id = members_service.create_member(conn, {"first_name": "Riley", "mobile": "9000000555", "plan_id": monthly_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    payment_id = payments_service.mark_paid(conn, member_id, monthly_id, admin_id, paid_on=datetime.date(2026, 1, 15))
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/members.py")
+    at.run()
+    at.button(key=f"view_button_{member_id}").click().run()
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.selectbox(key=f"edit_plan_{payment_id}").select(registration_id).run()
+    at.number_input(key=f"edit_amount_{payment_id}").set_value(4000.0).run()
+    at.button(key=f"save_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    check = db_module.get_connection()
+    updated = payments_service.payment_history(check, member_id)[0]
+    assert updated["plan_name"] == "Registration (3-Month)"
+    assert updated["period_start"] == "2026-01-15"
+    assert updated["valid_until"] == "2026-04-15"  # 90 days from the unchanged anchor
+    check.close()
+
+
+def test_edit_payment_opens_without_crashing_when_paid_on_is_in_the_future(tmp_path, monkeypatch):
+    # a member can legitimately pay ahead for a cycle that starts next
+    # month -- paid_on beyond today is real, valid data, not corruption
+    import datetime
+
+    future_paid_on = datetime.date.today() + datetime.timedelta(days=45)
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(
+        tmp_path, monkeypatch, "editpay9", paid_on=future_paid_on
+    )
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    assert at.date_input(key=f"edit_paid_on_{payment_id}").value == future_paid_on
+
+
+def test_edit_payment_save_updates_method_and_date(tmp_path, monkeypatch):
+    import datetime
+
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(
+        tmp_path, monkeypatch, "editpay4", payment_method="offline"
+    )
+    new_date = datetime.date(2026, 1, 20)
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.date_input(key=f"edit_paid_on_{payment_id}").set_value(new_date).run()
+    at.radio(key=f"edit_payment_method_{payment_id}").set_value("Online").run()
+    at.button(key=f"save_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    assert "updated" in at.success[0].value.lower()
+
+    import db as db_module
+    from services import payments as payments_service
+
+    check = db_module.get_connection()
+    updated = payments_service.payment_history(check, member_id)[0]
+    assert updated["paid_on"] == new_date.isoformat()
+    assert updated["payment_method"] == "online"
+    check.close()
+
+
+def test_edit_payment_save_updates_the_amount(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(tmp_path, monkeypatch, "editpay10")
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.number_input(key=f"edit_amount_{payment_id}").set_value(1200.0).run()
+    at.button(key=f"save_payment_{payment_id}").click().run()
+
+    assert not at.exception
+
+    import db as db_module
+    from services import payments as payments_service
+
+    check = db_module.get_connection()
+    assert payments_service.payment_history(check, member_id)[0]["amount"] == 1200.0
+    check.close()
+
+
+def test_edit_payment_cancel_discards_without_saving(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(
+        tmp_path, monkeypatch, "editpay5", payment_method="offline"
+    )
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.button(key=f"cancel_edit_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    with pytest.raises(KeyError):
+        at.button(key=f"save_payment_{payment_id}")
+    assert at.button(key=f"edit_payment_{payment_id}")
+
+    import db as db_module
+    from services import payments as payments_service
+
+    check = db_module.get_connection()
+    unchanged = payments_service.payment_history(check, member_id)[0]
+    assert unchanged["payment_method"] == "offline"
+    check.close()
+
+
+def test_edit_payment_delete_asks_for_confirmation_first(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(tmp_path, monkeypatch, "editpay6")
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.button(key=f"delete_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    assert any("delete" in el.value.lower() for el in at.warning)
+    assert at.button(key=f"confirm_delete_payment_{payment_id}")
+    assert at.button(key=f"cancel_delete_payment_{payment_id}")
+
+    import db as db_module
+    from services import payments as payments_service
+
+    check = db_module.get_connection()
+    assert len(payments_service.payment_history(check, member_id)) == 1
+    check.close()
+
+
+def test_edit_payment_delete_confirm_removes_it(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(tmp_path, monkeypatch, "editpay7")
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.button(key=f"delete_payment_{payment_id}").click().run()
+    at.button(key=f"confirm_delete_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    assert "deleted" in at.success[0].value.lower()
+
+    import db as db_module
+    from services import payments as payments_service
+
+    check = db_module.get_connection()
+    assert payments_service.payment_history(check, member_id) == []
+    check.close()
+
+
+def test_edit_payment_delete_cancel_keeps_it(tmp_path, monkeypatch):
+    at, member_id, payment_id, paid_on = _open_view_with_one_payment(tmp_path, monkeypatch, "editpay8")
+
+    at.button(key=f"edit_payment_{payment_id}").click().run()
+    at.button(key=f"delete_payment_{payment_id}").click().run()
+    at.button(key=f"cancel_delete_payment_{payment_id}").click().run()
+
+    assert not at.exception
+    # back to the edit form, not the confirmation
+    assert at.button(key=f"save_payment_{payment_id}")
+    assert at.button(key=f"delete_payment_{payment_id}")
+
+    import db as db_module
+    from services import payments as payments_service
+
+    check = db_module.get_connection()
+    assert len(payments_service.payment_history(check, member_id)) == 1
+    check.close()
+
+
 def test_edit_from_view_returns_to_view_not_list(tmp_path, monkeypatch):
     monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test16.db"))
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos16"))
@@ -812,6 +1067,7 @@ def test_member_time_slot_offers_the_same_options_as_the_trainer_form(tmp_path, 
     monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_slots_m1"))
     import db as db_module
     from services import payments as payments_service
+    from services import time_slots as time_slots_service
     from utils import time_slots
 
     conn = db_module.get_connection()
@@ -830,7 +1086,10 @@ def test_member_time_slot_offers_the_same_options_as_the_trainer_form(tmp_path, 
     at.button(key="show_add_member_button").click().run()
 
     assert not at.exception
-    assert at.selectbox(key="add_time_slot").options == [time_slots.NOT_SET] + time_slots.TIME_SLOTS
+    check = db_module.get_connection()
+    expected_labels = [s["label"] for s in time_slots_service.list_time_slots(check)]
+    check.close()
+    assert at.selectbox(key="add_time_slot").options == [time_slots.NOT_SET] + expected_labels
 
 
 def test_a_new_member_with_no_slot_chosen_is_stored_without_one(tmp_path, monkeypatch):

@@ -356,3 +356,201 @@ def test_a_deactivated_plan_can_be_edited_and_reactivated(tmp_path, monkeypatch)
     check2 = db_module.get_connection()
     assert any(p["id"] == retired for p in payments_service.list_plans(check2))
     check2.close()
+
+
+def test_staff_cannot_access_gym_settings_page(tmp_path, monkeypatch):
+    # st.navigation already hides Settings from staff (they can never
+    # switch_page into it through app.py's own routing) -- this test targets
+    # the page's own defense-in-depth check directly, in case it is ever
+    # reached some other way.
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_staff_gym.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_staff_gym"))
+    import db as db_module
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../pages_/settings_gym.py")
+    at.session_state["user"] = {"id": 999, "username": "staffer", "full_name": "Staff One", "role": "staff"}
+    at.run()
+
+    assert any("do not have access" in el.value.lower() for el in at.error)
+
+
+def test_staff_cannot_access_settings_plans_page(tmp_path, monkeypatch):
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_staff_plans.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_staff_plans"))
+    import db as db_module
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../pages_/settings_plans.py")
+    at.session_state["user"] = {"id": 999, "username": "staffer", "full_name": "Staff One", "role": "staff"}
+    at.run()
+
+    assert any("do not have access" in el.value.lower() for el in at.error)
+
+
+# --- Timing Options ------------------------------------------------------
+
+def _open_gym_settings(tmp_path, monkeypatch, name):
+    conn = _fresh_app(tmp_path, monkeypatch, name)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/settings_gym.py")
+    at.run()
+    return at
+
+
+def test_timing_options_lists_the_seeded_defaults(tmp_path, monkeypatch):
+    at = _open_gym_settings(tmp_path, monkeypatch, "slots1")
+
+    assert not at.exception
+    assert any("6:00 AM - 8:00 AM" in el.value for el in at.markdown)
+    assert any("4:00 PM - 6:00 PM" in el.value for el in at.markdown)
+
+
+def test_add_timing_option_appears_in_the_list(tmp_path, monkeypatch):
+    at = _open_gym_settings(tmp_path, monkeypatch, "slots2")
+
+    at.text_input(key="new_time_slot_label").input("Late Night").run()
+    at.button(key="FormSubmitter:new_time_slot_form-Add Timing Option").click().run()
+
+    assert not at.exception
+    assert "added" in at.success[0].value.lower()
+    assert any("Late Night" in el.value for el in at.markdown)
+
+
+def test_add_timing_option_rejects_a_blank_label(tmp_path, monkeypatch):
+    at = _open_gym_settings(tmp_path, monkeypatch, "slots3")
+
+    at.button(key="FormSubmitter:new_time_slot_form-Add Timing Option").click().run()
+
+    assert not at.exception
+    assert any("required" in el.value.lower() for el in at.error)
+
+
+def test_edit_timing_option_updates_the_label(tmp_path, monkeypatch):
+    import db as db_module
+    from services import time_slots as time_slots_service
+
+    conn = _fresh_app(tmp_path, monkeypatch, "slots4")
+    slot_id = time_slots_service.create_time_slot(conn, "Morning")
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/settings_gym.py")
+    at.run()
+
+    at.button(key=f"time_slot_edit_{slot_id}").click().run()
+    at.text_input(key=f"edit_time_slot_label_{slot_id}").input("Early Morning").run()
+    at.button(key=f"save_time_slot_{slot_id}").click().run()
+
+    assert not at.exception
+    check = db_module.get_connection()
+    assert time_slots_service.list_time_slots(check, active_only=False)[-1]["label"] == "Early Morning"
+    check.close()
+
+
+def test_delete_unused_timing_option_removes_it_completely(tmp_path, monkeypatch):
+    import db as db_module
+    from services import time_slots as time_slots_service
+
+    conn = _fresh_app(tmp_path, monkeypatch, "slots5")
+    slot_id = time_slots_service.create_time_slot(conn, "Late Night")
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/settings_gym.py")
+    at.run()
+
+    at.button(key=f"time_slot_delete_{slot_id}").click().run()
+
+    assert not at.exception
+    assert "deleted" in at.success[0].value.lower()
+    check = db_module.get_connection()
+    remaining_ids = {s["id"] for s in time_slots_service.list_time_slots(check, active_only=False)}
+    assert slot_id not in remaining_ids
+    check.close()
+
+
+def test_delete_timing_option_in_use_deactivates_instead(tmp_path, monkeypatch):
+    import db as db_module
+    from services import members as members_service
+    from services import payments as payments_service
+    from services import time_slots as time_slots_service
+
+    conn = _fresh_app(tmp_path, monkeypatch, "slots6")
+    slot_id = time_slots_service.create_time_slot(conn, "Late Night")
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    members_service.create_member(
+        conn,
+        {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id, "preferred_time_slot": "Late Night"},
+    )
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/settings_gym.py")
+    at.run()
+
+    at.button(key=f"time_slot_delete_{slot_id}").click().run()
+
+    assert not at.exception
+    assert "deactivated" in at.success[0].value.lower()
+    check = db_module.get_connection()
+    all_slots = {s["id"]: s for s in time_slots_service.list_time_slots(check, active_only=False)}
+    assert all_slots[slot_id]["is_active"] is False
+    check.close()
+
+
+def test_reactivate_timing_option(tmp_path, monkeypatch):
+    import db as db_module
+    from services import time_slots as time_slots_service
+
+    conn = _fresh_app(tmp_path, monkeypatch, "slots7")
+    slot_id = time_slots_service.create_time_slot(conn, "Late Night")
+    time_slots_service.set_time_slot_active(conn, slot_id, False)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../app.py")
+    at.run()
+    login_as_admin(at)
+    at.switch_page("pages_/settings_gym.py")
+    at.run()
+
+    at.checkbox(key="time_slot_show_inactive").check().run()
+    at.button(key=f"time_slot_reactivate_{slot_id}").click().run()
+
+    assert not at.exception
+    check = db_module.get_connection()
+    all_slots = {s["id"]: s for s in time_slots_service.list_time_slots(check, active_only=False)}
+    assert all_slots[slot_id]["is_active"] is True
+    check.close()

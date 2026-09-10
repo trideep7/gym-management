@@ -56,6 +56,16 @@ def test_preset_range_last_7_days():
     assert preset_range("Last 7 Days", today) == (datetime.date(2026, 8, 20), today)
 
 
+def test_preset_range_last_30_days():
+    today = datetime.date(2026, 8, 26)
+    assert preset_range("Last 30 Days", today) == (datetime.date(2026, 7, 28), today)
+
+
+def test_preset_range_last_90_days():
+    today = datetime.date(2026, 8, 26)
+    assert preset_range("Last 90 Days", today) == (datetime.date(2026, 5, 29), today)
+
+
 def test_preset_range_this_month():
     today = datetime.date(2026, 8, 26)
     assert preset_range("This Month", today) == (datetime.date(2026, 8, 1), today)

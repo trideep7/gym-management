@@ -70,9 +70,9 @@ def record_trainer_payment(conn, member_id, trainer_id, amount, trainer_share, r
     return cursor.lastrowid
 
 
-def mark_paid_with_pt(conn, member_id, plan_id, recorded_by, paid_on=None):
+def mark_paid_with_pt(conn, member_id, plan_id, recorded_by, paid_on=None, payment_method=None):
     paid_on_str = _resolve_paid_on(paid_on)
-    payment_id = payments_service.mark_paid(conn, member_id, plan_id, recorded_by, paid_on_str)
+    payment_id = payments_service.mark_paid(conn, member_id, plan_id, recorded_by, paid_on_str, payment_method)
 
     member = members_service.get_member(conn, member_id)
     pt_charged = False

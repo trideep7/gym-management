@@ -9,6 +9,11 @@ from services import reports as reports_service
 from utils.dates import format_date, preset_range
 
 conn = db.get_connection()
+current_user = st.session_state.user
+
+if current_user["role"] != "admin":
+    st.error("You do not have access to this page.")
+    st.stop()
 
 st.title("Reports")
 
@@ -21,10 +26,16 @@ col1.metric("Revenue This Month", f"₹{stats['revenue_this_month']:.2f}")
 col2.metric("Revenue This Year", f"₹{stats['revenue_this_year']:.2f}")
 col3.metric("Active Members", stats["active_members"])
 
-col4, col5, col6 = st.columns(3)
+col4, col5 = st.columns(2)
 col4.metric("Payments Overdue", stats["payments_overdue"])
 col5.metric("Due (Active)", f"₹{stats['due_active']:.2f}")
-col6.metric("Due (Inactive)", f"₹{stats['due_inactive']:.2f}")
+
+st.subheader("This Month's Payment Method Breakdown")
+method_totals = reports_service.payment_method_breakdown_this_month(conn, today)
+col_cash, col_online, col_unspecified = st.columns(3)
+col_cash.metric("Cash", f"₹{method_totals['offline']:.2f}")
+col_online.metric("Online", f"₹{method_totals['online']:.2f}")
+col_unspecified.metric("Unspecified", f"₹{method_totals['unspecified']:.2f}")
 
 st.subheader("Last 12 Months Revenue")
 trend = reports_service.monthly_revenue_trend(conn, today)

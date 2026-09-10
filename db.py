@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import sqlite3
 
@@ -73,7 +74,11 @@ CREATE TABLE IF NOT EXISTS payments (
     amount REAL NOT NULL,
     paid_on TEXT NOT NULL,
     valid_until TEXT NOT NULL,
-    recorded_by INTEGER NOT NULL REFERENCES users(id)
+    recorded_by INTEGER NOT NULL REFERENCES users(id),
+    payment_method TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    updated_by INTEGER REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS payment_reminders (
@@ -164,6 +169,9 @@ def init_db(conn):
     _migrate_make_trainer_payment_trainer_nullable(conn)
     _migrate_remove_attendance_unique_constraint(conn)
     _migrate_add_payment_period_start(conn)
+    _migrate_add_payment_method(conn)
+    _migrate_add_payment_timestamps(conn)
+    _migrate_add_payment_updated_by(conn)
     os.makedirs(get_photos_dir(), exist_ok=True)
 
 
@@ -341,6 +349,59 @@ def _migrate_add_payment_period_start(conn):
     conn.commit()
 
 
+def _migrate_add_payment_method(conn):
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(payments)")]
+    if "payment_method" not in cols:
+        conn.execute("ALTER TABLE payments ADD COLUMN payment_method TEXT")
+        conn.commit()
+
+
+def _migrate_add_payment_timestamps(conn):
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(payments)")]
+    if "created_at" not in cols:
+        conn.execute("ALTER TABLE payments ADD COLUMN created_at TEXT")
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE payments ADD COLUMN updated_at TEXT")
+    # backfill from paid_on -- the true entry time for a pre-existing
+    # payment isn't known, but paid_on is real, already-recorded data, and
+    # it's the best available proxy. Leaving these NULL would make the
+    # Recent Payments page stay empty on an established database until
+    # brand-new activity accumulated, even with months of real revenue on
+    # file. Both columns get the same value, so a backfilled row correctly
+    # reads as "Added", never "Edited".
+    conn.execute(
+        "UPDATE payments SET created_at = paid_on, updated_at = paid_on WHERE updated_at IS NULL"
+    )
+    conn.commit()
+
+
+def _migrate_add_payment_updated_by(conn):
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(payments)")]
+    if "updated_by" in cols:
+        return  # already migrated -- see below for why this must not re-run
+    conn.execute("ALTER TABLE payments ADD COLUMN updated_by INTEGER REFERENCES users(id)")
+    # backfill from recorded_by, once, right now while every row's
+    # updated_by is unconditionally NULL -- every payment has always
+    # tracked who recorded it, so a payment nobody has explicitly edited
+    # yet is accurately attributed to whoever recorded it, not "System".
+    #
+    # This must run only at the moment the column is created, never again
+    # on a later startup: unlike created_at/updated_at (where NULL only
+    # ever means "predates that column"), updated_by=NULL stays a real,
+    # ongoing state after this point -- an edit made with no known actor,
+    # shown as "System". Re-running a NULL-seeking backfill on every
+    # init_db call would silently reattribute every later "System" edit
+    # back to the original recorder on the very next app restart.
+    #
+    # FK enforcement is relaxed for this update alone: a database being
+    # migrated straight from a very old schema can have payments whose
+    # recorded_by predates today's users table shape.
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("UPDATE payments SET updated_by = recorded_by")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def seed_admin(conn):
     row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
     if row["c"] == 0:
@@ -351,3 +412,17 @@ def seed_admin(conn):
             ("admin", password_hash, "Administrator", "admin", datetime.datetime.now().isoformat()),
         )
         conn.commit()
+
+
+def seed_time_slots(conn):
+    row = conn.execute("SELECT 1 FROM settings WHERE key = 'time_slots'").fetchone()
+    if row is not None:
+        return
+    default_labels = [
+        "6:00 AM - 8:00 AM", "8:00 AM - 10:00 AM", "10:00 AM - 4:00 PM", "4:00 PM - 6:00 PM",
+    ]
+    slots = [{"id": i + 1, "label": label, "is_active": True} for i, label in enumerate(default_labels)]
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('time_slots', ?)", (json.dumps(slots),)
+    )
+    conn.commit()

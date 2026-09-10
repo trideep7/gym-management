@@ -21,6 +21,29 @@ def open_reports_page(tmp_path, monkeypatch, db_name="test.db", photos_name="pho
     return at
 
 
+def test_staff_cannot_access_reports_page(tmp_path, monkeypatch):
+    # st.navigation already hides this page from staff (they can never
+    # switch_page into it through app.py's own routing) -- this test targets
+    # the page's own defense-in-depth check directly, in case it is ever
+    # reached some other way.
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_staff.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_staff"))
+    import db as db_module
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../pages_/reports.py")
+    at.session_state["user"] = {"id": 999, "username": "staffer", "full_name": "Staff One", "role": "staff"}
+    at.run()
+
+    assert any("do not have access" in el.value.lower() for el in at.error)
+
+
 def test_top_stats_render_without_generating_a_report(tmp_path, monkeypatch):
     import db as db_module
     from services import members, payments
@@ -39,7 +62,7 @@ def test_top_stats_render_without_generating_a_report(tmp_path, monkeypatch):
 
     assert not at.exception
     metrics = {m.label: m.value for m in at.metric}
-    assert metrics["Due (Inactive)"] == "₹1500.00"
+    assert "Due (Inactive)" not in metrics
     assert metrics["Due (Active)"] == "₹0.00"
     assert metrics["Payments Overdue"] == "0"
     assert "Revenue This Month" in metrics
@@ -148,3 +171,32 @@ def test_personal_training_section_flags_unassigned_payouts(tmp_path, monkeypatc
     assert metrics["Gym Share"] == "₹1000.00"
     assert any("Not assigned to a trainer" in el.value for el in at.markdown)
     assert any("without a trainer assigned" in el.value for el in at.caption)
+
+
+def test_payment_method_breakdown_shows_cash_online_and_unspecified(tmp_path, monkeypatch):
+    import db as db_module
+    from services import members, payments
+
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test7.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos7"))
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+    today = datetime.date.today()
+    payments.mark_paid(conn, member_id, plan_id, admin_id, paid_on=today, payment_method="online")
+    payments.mark_paid(
+        conn, member_id, plan_id, admin_id,
+        paid_on=today.replace(day=1), payment_method="offline",
+    )
+    conn.close()
+
+    at = open_reports_page(tmp_path, monkeypatch, "test7.db", "photos7")
+
+    assert not at.exception
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Cash"] == "₹1500.00"
+    assert metrics["Online"] == "₹1500.00"
+    assert metrics["Unspecified"] == "₹0.00"

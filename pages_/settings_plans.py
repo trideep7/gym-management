@@ -5,6 +5,11 @@ from services import payments as payments_service
 from utils.errors import safe_action
 
 conn = db.get_connection()
+current_user = st.session_state.user
+
+if current_user["role"] != "admin":
+    st.error("You do not have access to this page.")
+    st.stop()
 
 st.title("Membership Plans")
 
@@ -99,16 +104,16 @@ else:
                     st.session_state.plan_flash = f"Plan '{plan['name']}' reactivated."
                     st.rerun()
 
-    st.subheader("Add a Plan")
-    with st.form("new_plan_form", clear_on_submit=True):
-        name = st.text_input("Plan Name", key="plan_name")
-        amount = st.number_input("Amount", min_value=0.0, step=100.0, key="plan_amount")
-        duration = st.number_input("Duration (days)", min_value=1, step=1, value=30, key="plan_duration")
-        if st.form_submit_button("Add Plan", key="add_plan_button"):
-            if name:
-                ok, _ = safe_action(lambda: payments_service.create_plan(conn, name, amount, int(duration)))
-                if ok:
-                    st.session_state.plan_flash = f"Plan '{name}' added."
-                    st.rerun()
-            else:
-                st.error("Plan Name is required.")
+    with st.expander("Add a Plan"):
+        with st.form("new_plan_form", clear_on_submit=True):
+            name = st.text_input("Plan Name", key="plan_name")
+            amount = st.number_input("Amount", min_value=0.0, step=100.0, key="plan_amount")
+            duration = st.number_input("Duration (days)", min_value=1, step=1, value=30, key="plan_duration")
+            if st.form_submit_button("Add Plan", key="add_plan_button"):
+                if name:
+                    ok, _ = safe_action(lambda: payments_service.create_plan(conn, name, amount, int(duration)))
+                    if ok:
+                        st.session_state.plan_flash = f"Plan '{name}' added."
+                        st.rerun()
+                else:
+                    st.error("Plan Name is required.")

@@ -38,6 +38,15 @@ with st.expander("Members — Add, Edit, View, Search"):
    **Deactivate Member** if they've left the gym (this doesn't delete
    their record — history is kept).
 
+**Correcting a past payment**
+1. On a member's View screen, find the payment under **Recent Payments**
+   and click **Edit**.
+2. Fix the **Paid On** date and/or the **Payment Method**, then click
+   **Save**. The amount is always recalculated from the plan and the
+   member's current locker/PT add-ons — it isn't editable directly.
+3. To remove a payment entered by mistake, click **Delete** and confirm.
+   This can't be undone.
+
 **Reactivating a member**
 1. Check **Show inactive members** in the search filters below — deactivated
    members are hidden from the list by default.
@@ -70,9 +79,15 @@ Each page has a **Sort by** control above the table — *Earliest first*
 or *Latest first* on that page's own date column. Each page remembers
 its own choice, and switching direction takes you back to page 1.
 
+**Searching**
+- Each of the three pages has its own search box above the table,
+  matching name **or** mobile number. Clearing it shows everyone again.
+
 **Marking a member as paid**
 1. Find the member on whichever of the three pages they're on.
-2. Click **Mark Paid** — this records a payment for their assigned plan.
+2. Click **Mark Paid** — a small form opens below their row.
+3. Set the **Paid On** date (defaults to today) and choose **Offline**
+   or **Online**, then click **Confirm** to record the payment.
 - **Mark Paid** is disabled if the member has no plan assigned.
 
 **Plan dates don't move when a payment is a day or two off**

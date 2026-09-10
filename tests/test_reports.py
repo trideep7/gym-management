@@ -81,8 +81,60 @@ def test_overview_stats_returns_all_kpis(conn):
         "active_members": 0,
         "payments_overdue": 0,
         "due_active": 0,
-        "due_inactive": 1500.0,
     }
+
+
+def test_overview_stats_excludes_revenue_dated_after_the_current_month(conn):
+    # a member paying ahead for a future cycle must not inflate this
+    # month's (or this year's) revenue total before that month arrives --
+    # this is exactly what "Revenue This Month" showing more than the
+    # matching bar on the 12-month chart would mean
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    today = datetime.date(2026, 8, 26)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=today)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 9, 15))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2027, 1, 10))
+
+    stats = reports.overview_stats(conn, today)
+
+    assert stats["revenue_this_month"] == 1500.0
+    # the September payment is still within calendar year 2026, so it
+    # counts toward the year total -- only the 2027 payment is excluded
+    assert stats["revenue_this_year"] == 3000.0
+
+
+def test_overview_stats_includes_revenue_dated_later_in_the_current_month(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    today = datetime.date(2026, 8, 5)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=today)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 26))  # later this month
+
+    stats = reports.overview_stats(conn, today)
+
+    assert stats["revenue_this_month"] == 3000.0
+
+
+def test_payment_method_breakdown_this_month_splits_by_method(conn):
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    user_id = auth.create_user(conn, "staffer", "pw12345", "Staff One", "staff")
+    today = datetime.date(2026, 8, 26)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=today, payment_method="online")
+    payments.mark_paid(
+        conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 1), payment_method="offline"
+    )
+    # outside the month -- must not be counted
+    payments.mark_paid(
+        conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 9, 1), payment_method="online"
+    )
+
+    breakdown = reports.payment_method_breakdown_this_month(conn, today)
+
+    assert breakdown == {"online": 1500.0, "offline": 1500.0, "unspecified": 0}
 
 
 def test_due_summary_delegates_to_payments(conn):

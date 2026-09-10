@@ -62,8 +62,8 @@ def test_never_paid_page_lists_members_with_no_payment_on_record(tmp_path, monke
     assert at.button(key=f"mark_paid_{never_id}")
 
 
-def test_never_paid_mark_paid_records_the_payment(tmp_path, monkeypatch):
-    conn = _fresh(tmp_path, monkeypatch, "np2")
+def test_never_paid_mark_paid_opens_a_confirm_form_without_recording_yet(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "np2a")
     from services import members as members_service
     from services import payments as payments_service
 
@@ -75,9 +75,110 @@ def test_never_paid_mark_paid_records_the_payment(tmp_path, monkeypatch):
     at.button(key=f"mark_paid_{member_id}").click().run()
 
     assert not at.exception
+    assert not at.success
+    assert at.date_input(key=f"paid_on_input_{member_id}")
+    assert at.radio(key=f"payment_method_input_{member_id}")
+    assert at.button(key=f"confirm_mark_paid_{member_id}")
+    assert at.button(key=f"cancel_mark_paid_{member_id}")
+
+    import db as db_module
+
+    check = db_module.get_connection()
+    assert payments_service.payment_history(check, member_id) == []
+    check.close()
+
+
+def test_never_paid_mark_paid_cancel_discards_without_recording(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "np2b")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    conn.close()
+
+    at = _open(NEVER_PAID)
+    at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"cancel_mark_paid_{member_id}").click().run()
+
+    assert not at.exception
+    with pytest.raises(KeyError):
+        at.button(key=f"confirm_mark_paid_{member_id}")
+    assert at.button(key=f"mark_paid_{member_id}")
+
+    import db as db_module
+
+    check = db_module.get_connection()
+    assert payments_service.payment_history(check, member_id) == []
+    check.close()
+
+
+def test_never_paid_mark_paid_confirm_records_the_payment(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "np2c")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    conn.close()
+
+    at = _open(NEVER_PAID)
+    at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
+
+    assert not at.exception
     assert "paid" in at.success[0].value.lower()
     # the row must leave this page once they've paid
     assert not any("Sam" in el.value for el in at.markdown)
+
+
+def test_never_paid_mark_paid_defaults_to_todays_date_and_offline(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "np2d")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    conn.close()
+
+    at = _open(NEVER_PAID)
+    at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
+
+    assert not at.exception
+    import db as db_module
+
+    check = db_module.get_connection()
+    payment = payments_service.payment_history(check, member_id)[0]
+    assert payment["paid_on"] == datetime.date.today().isoformat()
+    assert payment["payment_method"] == "offline"
+    check.close()
+
+
+def test_never_paid_mark_paid_can_pick_online_and_a_backdated_date(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "np2e")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    member_id = members_service.create_member(conn, {"first_name": "Sam", "mobile": "9000000111", "plan_id": plan_id})
+    conn.close()
+    backdated = datetime.date.today() - datetime.timedelta(days=2)
+
+    at = _open(NEVER_PAID)
+    at.button(key=f"mark_paid_{member_id}").click().run()
+    at.date_input(key=f"paid_on_input_{member_id}").set_value(backdated).run()
+    at.radio(key=f"payment_method_input_{member_id}").set_value("Online").run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
+
+    assert not at.exception
+    import db as db_module
+
+    check = db_module.get_connection()
+    payment = payments_service.payment_history(check, member_id)[0]
+    assert payment["paid_on"] == backdated.isoformat()
+    assert payment["payment_method"] == "online"
+    check.close()
 
 
 def test_never_paid_shows_members_own_plan_as_text_not_a_selectbox(tmp_path, monkeypatch):
@@ -135,6 +236,7 @@ def test_mark_paid_failure_shows_friendly_message_not_traceback(tmp_path, monkey
 
     at = _open(NEVER_PAID)
     at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
 
     assert not at.exception
     assert any("something went wrong" in el.value.lower() for el in at.error)
@@ -247,6 +349,7 @@ def test_overdue_mark_paid_records_the_payment(tmp_path, monkeypatch):
 
     at = _open(OVERDUE)
     at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
 
     assert not at.exception
     assert "paid" in at.success[0].value.lower()
@@ -349,6 +452,7 @@ def test_upcoming_page_can_take_an_early_payment_without_moving_the_cycle(tmp_pa
 
     at = _open(UPCOMING)
     at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
 
     assert not at.exception
     import db as db_module
@@ -406,6 +510,7 @@ def test_mark_paid_logs_payout_when_has_pt_and_trainer_assigned(tmp_path, monkey
 
     at = _open(NEVER_PAID)
     at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
 
     assert not at.exception
     assert any("Personal Training" in el.value for el in at.success)
@@ -433,6 +538,7 @@ def test_mark_paid_without_pt_says_nothing_about_training(tmp_path, monkeypatch)
 
     at = _open(NEVER_PAID)
     at.button(key=f"mark_paid_{member_id}").click().run()
+    at.button(key=f"confirm_mark_paid_{member_id}").click().run()
 
     assert not at.exception
     assert any(el.value == "Marked Sam as paid." for el in at.success)
@@ -597,6 +703,115 @@ def test_changing_sort_direction_returns_to_the_first_page(tmp_path, monkeypatch
     assert len([b for b in at.button if b.key and b.key.startswith("mark_paid_")]) == 5
 
     at.radio(key="overdue_page_sort").set_value("Latest first").run()
+
+    assert not at.exception
+    assert len([b for b in at.button if b.key and b.key.startswith("mark_paid_")]) == 20
+
+
+# --- search ---------------------------------------------------------------
+
+def test_overdue_page_search_filters_by_name(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "search1")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    admin_id = _admin_id(conn)
+    long_ago = datetime.date.today() - datetime.timedelta(days=60)
+    a_id = members_service.create_member(conn, {"first_name": "Asha", "mobile": "9000000111", "plan_id": plan_id})
+    payments_service.mark_paid(conn, a_id, plan_id, admin_id, paid_on=long_ago)
+    b_id = members_service.create_member(conn, {"first_name": "Riya", "mobile": "9000000222", "plan_id": plan_id})
+    payments_service.mark_paid(conn, b_id, plan_id, admin_id, paid_on=long_ago)
+    conn.close()
+
+    at = _open(OVERDUE)
+    at.text_input(key="overdue_page_search").input("Asha").run()
+
+    assert not at.exception
+    assert any("Asha" in el.value for el in at.markdown)
+    assert not any("Riya" in el.value for el in at.markdown)
+
+
+def test_overdue_page_search_filters_by_mobile(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "search2")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    admin_id = _admin_id(conn)
+    long_ago = datetime.date.today() - datetime.timedelta(days=60)
+    a_id = members_service.create_member(conn, {"first_name": "Asha", "mobile": "9000000111", "plan_id": plan_id})
+    payments_service.mark_paid(conn, a_id, plan_id, admin_id, paid_on=long_ago)
+    b_id = members_service.create_member(conn, {"first_name": "Riya", "mobile": "9000000222", "plan_id": plan_id})
+    payments_service.mark_paid(conn, b_id, plan_id, admin_id, paid_on=long_ago)
+    conn.close()
+
+    at = _open(OVERDUE)
+    at.text_input(key="overdue_page_search").input("222").run()
+
+    assert not at.exception
+    assert any("Riya" in el.value for el in at.markdown)
+    assert not any("Asha" in el.value for el in at.markdown)
+
+
+def test_overdue_page_search_with_no_matches_does_not_claim_nobody_is_overdue(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "search3")
+    _seed_overdue_trio(conn)
+    conn.close()
+
+    at = _open(OVERDUE)
+    at.text_input(key="overdue_page_search").input("Nobody").run()
+
+    assert not at.exception
+    assert not any("Oldest" in el.value for el in at.markdown)
+    assert not any("Nobody is overdue" in el.value for el in at.info)
+
+
+def test_upcoming_page_search_filters_by_name(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path, monkeypatch, "search4")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    admin_id = _admin_id(conn)
+    today = datetime.date.today()
+    a_id = members_service.create_member(conn, {"first_name": "Asha", "mobile": "9000000111", "plan_id": plan_id})
+    payments_service.mark_paid(conn, a_id, plan_id, admin_id, paid_on=today - datetime.timedelta(days=28))
+    b_id = members_service.create_member(conn, {"first_name": "Riya", "mobile": "9000000222", "plan_id": plan_id})
+    payments_service.mark_paid(conn, b_id, plan_id, admin_id, paid_on=today - datetime.timedelta(days=28))
+    conn.close()
+
+    at = _open(UPCOMING)
+    at.text_input(key="upcoming_page_search").input("Riya").run()
+
+    assert not at.exception
+    assert any("Riya" in el.value for el in at.markdown)
+    assert not any("Asha" in el.value for el in at.markdown)
+
+
+def test_search_resets_to_first_page(tmp_path, monkeypatch):
+    # otherwise the previous page number leaves you looking at a leftover
+    # tail page instead of the top of the newly-filtered results
+    conn = _fresh(tmp_path, monkeypatch, "search5")
+    from services import members as members_service
+    from services import payments as payments_service
+
+    plan_id = payments_service.create_plan(conn, "Monthly", 1500.0, 30)
+    admin_id = _admin_id(conn)
+    today = datetime.date.today()
+    for i in range(25):
+        member_id = members_service.create_member(
+            conn, {"first_name": f"Late{i:02d}", "mobile": f"94000006{i:02d}", "plan_id": plan_id}
+        )
+        payments_service.mark_paid(conn, member_id, plan_id, admin_id, paid_on=today - datetime.timedelta(days=40 + i))
+    conn.close()
+
+    at = _open(OVERDUE)
+    at.button(key="overdue_page_next").click().run()
+    assert len([b for b in at.button if b.key and b.key.startswith("mark_paid_")]) == 5
+
+    # query still matches all 25 members -- only the search text changed
+    at.text_input(key="overdue_page_search").input("Late").run()
 
     assert not at.exception
     assert len([b for b in at.button if b.key and b.key.startswith("mark_paid_")]) == 20

@@ -116,3 +116,26 @@ def test_delete_failure_shows_friendly_message_not_traceback(tmp_path, monkeypat
 
     assert not at.exception
     assert any("something went wrong" in el.value.lower() for el in at.error)
+
+
+def test_staff_cannot_access_equipment_page(tmp_path, monkeypatch):
+    # st.navigation already hides Settings from staff (they can never
+    # switch_page into it through app.py's own routing) -- this test targets
+    # the page's own defense-in-depth check directly, in case it is ever
+    # reached some other way.
+    monkeypatch.setenv("GYM_DB_PATH", str(tmp_path / "test_staff_equip.db"))
+    monkeypatch.setenv("GYM_PHOTOS_DIR", str(tmp_path / "photos_staff_equip"))
+    import db as db_module
+
+    conn = db_module.get_connection()
+    db_module.init_db(conn)
+    db_module.seed_admin(conn)
+    conn.close()
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("../pages_/equipment.py")
+    at.session_state["user"] = {"id": 999, "username": "staffer", "full_name": "Staff One", "role": "staff"}
+    at.run()
+
+    assert any("do not have access" in el.value.lower() for el in at.error)

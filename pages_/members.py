@@ -4,11 +4,13 @@ import streamlit as st
 
 import db
 import ui
+from pages_ import _payments_common
 from services import attendance as attendance_service
 from services import members as members_service
 from services import payments as payments_service
 from services import reminders as reminders_service
 from services import settings as settings_service
+from services import time_slots as time_slots_service
 from services import trainers as trainers_service
 from utils import time_slots
 from utils.dates import format_date, format_time
@@ -104,7 +106,8 @@ def member_form(key_prefix, existing=None):
         "How do you find our Gym, any feedback?", value=existing.get("how_found_us", ""), key=f"{key_prefix}_how_found"
     )
     current_slot = existing.get("preferred_time_slot")
-    slot_options = time_slots.options_for(current_slot)
+    available_time_slots = [s["label"] for s in time_slots_service.list_time_slots(conn)]
+    slot_options = time_slots.options_for(current_slot, available_time_slots)
     data["preferred_time_slot"] = time_slots.to_stored(
         st.selectbox(
             "Preferred Timing", slot_options,
@@ -269,17 +272,24 @@ elif st.session_state.viewing_member_id is not None:
     st.subheader("Recent Payments")
     history = payments_service.payment_history(conn, member_id, limit=6)
     if history:
-        hist_header = st.columns([2, 2, 2, 2])
+        hist_widths = [2, 2, 2, 2, 2, 1]
+        hist_header = st.columns(hist_widths)
         hist_header[0].markdown("**Plan**")
         hist_header[1].markdown("**Amount**")
         hist_header[2].markdown("**Paid On**")
         hist_header[3].markdown("**Valid Until**")
+        hist_header[4].markdown("**Method**")
+        hist_header[5].markdown("**Edit**")
         for payment in history:
-            hist_row = st.columns([2, 2, 2, 2])
+            hist_row = st.columns(hist_widths)
             hist_row[0].write(payment["plan_name"])
             hist_row[1].write(f"₹{payment['amount']:.2f}")
             hist_row[2].write(format_date(payment["paid_on"]))
             hist_row[3].write(format_date(payment["valid_until"]))
+            hist_row[4].write((payment["payment_method"] or "—").title())
+            if hist_row[5].button("Edit", key=f"edit_payment_{payment['id']}"):
+                _payments_common.start_editing_payment("", payment["id"])
+            _payments_common.render_payment_edit_controls(conn, payment, "", "member_flash", user["id"])
     else:
         st.write("No payments recorded yet.")
 

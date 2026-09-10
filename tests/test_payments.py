@@ -169,6 +169,71 @@ def test_payment_history_respects_limit(conn):
     assert history[5]["paid_on"] == (base + datetime.timedelta(days=2 * 30)).isoformat()
 
 
+def test_revenue_between_sums_amounts_within_the_range(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 10))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 20))
+
+    assert payments.revenue_between(conn, "2026-08-01", "2026-08-31") == 3000.0
+
+
+def test_revenue_between_excludes_payments_dated_after_the_range(conn):
+    # a member paying ahead for next month's cycle must not inflate this
+    # month's total before that month arrives
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 15))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 10, 1))
+
+    assert payments.revenue_between(conn, "2026-08-01", "2026-08-31") == 1500.0
+
+
+def test_revenue_between_excludes_payments_dated_before_the_range(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 7, 31))
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 15))
+
+    assert payments.revenue_between(conn, "2026-08-01", "2026-08-31") == 1500.0
+
+
+def test_payment_method_breakdown_splits_online_and_offline(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 10), payment_method="online")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 12), payment_method="offline")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 15), payment_method="offline")
+
+    breakdown = payments.payment_method_breakdown(conn, "2026-08-01", "2026-08-31")
+
+    assert breakdown == {"online": 1500.0, "offline": 3000.0, "unspecified": 0}
+
+
+def test_payment_method_breakdown_buckets_missing_methods_as_unspecified(conn):
+    # payments recorded before payment_method existed (or never given one)
+    # must still show up somewhere, so the breakdown always reconciles
+    # with the plain revenue total
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 8, 10))
+
+    breakdown = payments.payment_method_breakdown(conn, "2026-08-01", "2026-08-31")
+
+    assert breakdown == {"online": 0, "offline": 0, "unspecified": 1500.0}
+
+
+def test_payment_method_breakdown_excludes_payments_outside_the_range(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 7, 31), payment_method="online")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on=datetime.date(2026, 9, 1), payment_method="online")
+
+    breakdown = payments.payment_method_breakdown(conn, "2026-08-01", "2026-08-31")
+
+    assert breakdown == {"online": 0, "offline": 0, "unspecified": 0}
+
+
 def test_revenue_by_day_groups_by_paid_on_date(conn):
     member_id, user_id = setup_member_and_user(conn)
     plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
@@ -437,3 +502,393 @@ def test_update_plan_can_edit_a_deactivated_plan(conn):
     plan = next(p for p in payments.list_plans(conn, active_only=False) if p["id"] == plan_id)
     assert plan["amount"] == 1200.0
     assert plan["is_active"] == 0  # editing must not silently revive it
+
+
+# --- payment method (online/offline) ------------------------------------
+
+def test_mark_paid_records_the_payment_method(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, payment_method="online")
+    history = payments.payment_history(conn, member_id)
+    assert history[0]["payment_method"] == "online"
+
+
+def test_mark_paid_without_a_payment_method_leaves_it_null(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    history = payments.payment_history(conn, member_id)
+    assert history[0]["payment_method"] is None
+
+
+def test_mark_paid_rejects_an_unknown_payment_method(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    with pytest.raises(ValueError):
+        payments.mark_paid(conn, member_id, plan_id, user_id, payment_method="cheque")
+
+
+# --- editing a payment ---------------------------------------------------
+
+def test_update_payment_changes_the_payment_method(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15", payment_method="offline")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(conn, payment_id, payment_method="online", paid_on="2026-01-15", amount=1500.0)
+
+    updated = payments.payment_history(conn, member_id)[0]
+    assert updated["payment_method"] == "online"
+
+
+def test_update_payment_rejects_an_unknown_payment_method(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    with pytest.raises(ValueError):
+        payments.update_payment(conn, payment_id, payment_method="cheque", paid_on="2026-01-15", amount=1500.0)
+
+
+def test_update_payment_rejects_an_unknown_payment_id(conn):
+    with pytest.raises(ValueError):
+        payments.update_payment(conn, 9999, payment_method="online", paid_on="2026-01-15", amount=1500.0)
+
+
+def test_update_payment_leaves_the_period_untouched_when_the_date_is_unchanged(conn):
+    # an early renewal chains its period_start away from paid_on -- fixing
+    # just the payment method must not silently collapse that back to a
+    # plain paid_on + duration_days period
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-12")  # chains to 02-15
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+    before = payments.payment_history(conn, member_id)[0]
+
+    payments.update_payment(
+        conn, payment_id, payment_method="online", paid_on=before["paid_on"], amount=before["amount"]
+    )
+
+    after = payments.payment_history(conn, member_id)[0]
+    assert after["period_start"] == before["period_start"] == "2026-02-15"
+    assert after["valid_until"] == before["valid_until"] == "2026-03-17"
+
+
+def test_update_payment_recalculates_its_own_period_when_the_date_changes(conn):
+    # correcting the date is a standalone fix to this one payment's own
+    # coverage -- it must not chain off (or ripple into) any other payment
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(conn, payment_id, payment_method="offline", paid_on="2026-01-20", amount=1500.0)
+
+    updated = payments.payment_history(conn, member_id)[0]
+    assert updated["paid_on"] == "2026-01-20"
+    assert updated["period_start"] == "2026-01-20"
+    assert updated["valid_until"] == "2026-02-19"
+
+
+def test_update_payment_does_not_ripple_into_other_payments(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-14")
+    history = payments.payment_history(conn, member_id)
+    first_payment_id = history[1]["id"]  # oldest of the two
+    second_before = history[0]
+
+    payments.update_payment(conn, first_payment_id, payment_method="online", paid_on="2026-01-10", amount=1500.0)
+
+    second_after = next(p for p in payments.payment_history(conn, member_id) if p["id"] == second_before["id"])
+    assert second_after["period_start"] == second_before["period_start"]
+    assert second_after["valid_until"] == second_before["valid_until"]
+
+
+def test_update_payment_changes_the_amount(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(conn, payment_id, payment_method="offline", paid_on="2026-01-15", amount=1200.0)
+
+    assert payments.payment_history(conn, member_id)[0]["amount"] == 1200.0
+
+
+# --- editing a payment's plan ---------------------------------------------
+
+def test_update_payment_without_plan_id_keeps_the_existing_plan(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(conn, payment_id, payment_method="offline", paid_on="2026-01-15", amount=1500.0)
+
+    assert payments.payment_history(conn, member_id)[0]["plan_id"] == plan_id
+
+
+def test_update_payment_can_change_the_plan(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    monthly_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    registration_id = payments.create_plan(conn, "Registration (3-Month)", 4000.0, 90)
+    payments.mark_paid(conn, member_id, monthly_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(
+        conn, payment_id, payment_method="offline", paid_on="2026-01-15", amount=4000.0, plan_id=registration_id
+    )
+
+    updated = payments.payment_history(conn, member_id)[0]
+    assert updated["plan_id"] == registration_id
+    assert updated["plan_name"] == "Registration (3-Month)"
+
+
+def test_update_payment_changing_the_plan_recalculates_valid_until_from_its_duration(conn):
+    # the coverage LENGTH must reflect the corrected plan even if the
+    # start date (period_start) is left exactly where it was
+    member_id, user_id = setup_member_and_user(conn)
+    monthly_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    registration_id = payments.create_plan(conn, "Registration (3-Month)", 4000.0, 90)
+    payments.mark_paid(conn, member_id, monthly_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(
+        conn, payment_id, payment_method="offline", paid_on="2026-01-15", amount=4000.0, plan_id=registration_id
+    )
+
+    updated = payments.payment_history(conn, member_id)[0]
+    assert updated["period_start"] == "2026-01-15"  # anchor unchanged
+    assert updated["valid_until"] == "2026-04-15"  # 90 days from the same anchor
+
+
+def test_update_payment_rejects_an_unknown_plan_id(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    with pytest.raises(ValueError):
+        payments.update_payment(
+            conn, payment_id, payment_method="offline", paid_on="2026-01-15", amount=1500.0, plan_id=9999
+        )
+
+
+def test_update_payment_editing_the_plan_does_not_ripple_into_other_payments(conn):
+    member_id, plan_id, user_id = _cycle_member(conn)
+    registration_id = payments.create_plan(conn, "Registration (3-Month)", 4000.0, 90)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-14")
+    history = payments.payment_history(conn, member_id)
+    first_payment_id = history[1]["id"]  # oldest of the two
+    second_before = history[0]
+
+    payments.update_payment(
+        conn, first_payment_id, payment_method="online", paid_on="2026-01-15", amount=4000.0,
+        plan_id=registration_id,
+    )
+
+    second_after = next(p for p in payments.payment_history(conn, member_id) if p["id"] == second_before["id"])
+    assert second_after["period_start"] == second_before["period_start"]
+    assert second_after["valid_until"] == second_before["valid_until"]
+    assert second_after["plan_id"] == second_before["plan_id"]
+
+
+def test_update_payment_same_plan_and_date_leaves_period_untouched(conn):
+    # re-selecting the payment's own current plan is a no-op for dates,
+    # exactly like leaving paid_on unchanged already is
+    member_id, plan_id, user_id = _cycle_member(conn)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-12")  # chains to 02-15
+    before = payments.payment_history(conn, member_id)[0]
+
+    payments.update_payment(
+        conn, before["id"], payment_method="online", paid_on=before["paid_on"], amount=before["amount"],
+        plan_id=before["plan_id"],
+    )
+
+    after = payments.payment_history(conn, member_id)[0]
+    assert after["period_start"] == before["period_start"] == "2026-02-15"
+    assert after["valid_until"] == before["valid_until"] == "2026-03-17"
+
+
+def test_update_payment_rejects_a_negative_amount(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    with pytest.raises(ValueError):
+        payments.update_payment(conn, payment_id, payment_method="offline", paid_on="2026-01-15", amount=-1.0)
+
+
+# --- activity timestamps -------------------------------------------------
+
+def test_mark_paid_sets_created_and_updated_timestamps(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    payment = payments.payment_history(conn, member_id)[0]
+
+    assert payment["created_at"] is not None
+    assert payment["updated_at"] is not None
+    assert payment["created_at"] == payment["updated_at"]
+    datetime.datetime.fromisoformat(payment["created_at"])  # doesn't raise
+
+
+def test_update_payment_bumps_updated_at_but_not_created_at(conn):
+    import time
+
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+    original = payments.payment_history(conn, member_id)[0]
+
+    time.sleep(0.01)
+    payments.update_payment(conn, payment_id, payment_method="online", paid_on="2026-01-15", amount=1500.0)
+
+    updated = payments.payment_history(conn, member_id)[0]
+    assert updated["created_at"] == original["created_at"]
+    assert updated["updated_at"] > original["updated_at"]
+
+
+def test_mark_paid_attributes_updated_by_to_whoever_recorded_it(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+
+    assert payments.payment_history(conn, member_id)[0]["updated_by"] == user_id
+
+
+def test_update_payment_attributes_updated_by_to_whoever_edited_it(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+    editor_id = auth.create_user(conn, "editor", "pw12345", "Editor One", "staff")
+
+    payments.update_payment(
+        conn, payment_id, payment_method="online", paid_on="2026-01-15", amount=1500.0, updated_by=editor_id
+    )
+
+    updated = payments.payment_history(conn, member_id)[0]
+    assert updated["updated_by"] == editor_id
+    # recorded_by (who originally created it) must survive the edit
+    assert updated["recorded_by"] == user_id
+
+
+def test_update_payment_without_updated_by_leaves_it_unattributed(conn):
+    # a programmatic edit that doesn't specify an actor is honestly
+    # unattributed -- it must not silently keep crediting the original
+    # recorder for someone else's later change
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.update_payment(conn, payment_id, payment_method="online", paid_on="2026-01-15", amount=1500.0)
+
+    assert payments.payment_history(conn, member_id)[0]["updated_by"] is None
+
+
+def test_recent_payments_includes_member_and_plan_details(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    today = datetime.date.today().isoformat()
+
+    recent = payments.recent_payments(conn, today, today)
+
+    assert len(recent) == 1
+    assert recent[0]["member_first_name"] == "Sam"
+    assert recent[0]["plan_name"] == "Monthly"
+    assert recent[0]["amount"] == 1500.0
+
+
+def test_recent_payments_includes_who_touched_it(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    today = datetime.date.today().isoformat()
+
+    recent = payments.recent_payments(conn, today, today)
+
+    assert recent[0]["updated_by_role"] == "staff"
+    assert recent[0]["updated_by_name"] == "Staff One"
+
+
+def test_recent_payments_reports_no_name_when_unattributed(conn):
+    # this is the "System" case the Recent Payments page falls back to
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+    payments.update_payment(conn, payment_id, payment_method="online", paid_on="2026-01-15", amount=1500.0)
+    today = datetime.date.today().isoformat()
+
+    recent = payments.recent_payments(conn, today, today)
+
+    assert recent[0]["updated_by_name"] is None
+    assert recent[0]["updated_by_role"] is None
+
+
+def test_recent_payments_excludes_activity_outside_the_range(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    two_days_ago = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
+
+    assert payments.recent_payments(conn, two_days_ago, yesterday) == []
+
+
+def test_recent_payments_orders_most_recently_updated_first(conn):
+    import time
+
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    first_id = payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-01-15")
+    time.sleep(0.01)
+    second_id = payments.mark_paid(conn, member_id, plan_id, user_id, paid_on="2026-02-15")
+    time.sleep(0.01)
+    # touching the older payment must move it back to the top
+    payments.update_payment(conn, first_id, payment_method="online", paid_on="2026-01-15", amount=1500.0)
+
+    today = datetime.date.today().isoformat()
+    recent = payments.recent_payments(conn, today, today)
+
+    assert [r["id"] for r in recent] == [first_id, second_id]
+
+
+def test_recent_payments_excludes_rows_with_no_timestamp(conn):
+    # a payment migrated in from before activity tracking existed has a
+    # NULL updated_at -- it must never appear as if it just happened
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    conn.execute("UPDATE payments SET created_at = NULL, updated_at = NULL")
+    conn.commit()
+
+    today = datetime.date.today().isoformat()
+    assert payments.recent_payments(conn, today, today) == []
+
+
+def test_delete_payment_removes_it(conn):
+    member_id, user_id = setup_member_and_user(conn)
+    plan_id = payments.create_plan(conn, "Monthly", 1500.0, 30)
+    payments.mark_paid(conn, member_id, plan_id, user_id)
+    payment_id = payments.payment_history(conn, member_id)[0]["id"]
+
+    payments.delete_payment(conn, payment_id)
+
+    assert payments.payment_history(conn, member_id) == []
+
+
+def test_delete_payment_rejects_an_unknown_payment_id(conn):
+    with pytest.raises(ValueError):
+        payments.delete_payment(conn, 9999)

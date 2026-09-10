@@ -18,6 +18,7 @@ try:
     conn = db.get_connection()
     db.init_db(conn)
     db.seed_admin(conn)
+    db.seed_time_slots(conn)
 except Exception:
     logger.exception("Failed to start the app (database initialization)")
     st.error(
@@ -88,22 +89,23 @@ else:
             st.Page("pages_/dashboard.py", title="Dashboard", icon="🏠"),
             st.Page("pages_/members.py", title="Members", icon="👥"),
             st.Page("pages_/trainers.py", title="Trainers", icon="🧑‍🏫"),
-            st.Page("pages_/reports.py", title="Reports", icon="📊"),
             st.Page("pages_/help.py", title="Help", icon="❓"),
         ],
         "Payments": [
             st.Page("pages_/payments_upcoming.py", title="Upcoming", icon="⏳"),
             st.Page("pages_/payments_overdue.py", title="Overdue", icon="🔴"),
             st.Page("pages_/payments_never_paid.py", title="Never Paid", icon="⚪"),
-        ],
-        "Settings": [
-            st.Page("pages_/settings_plans.py", title="Membership Plans", icon="💳"),
-            st.Page("pages_/settings_gym.py", title="Gym Settings", icon="⚙️"),
-            st.Page("pages_/equipment.py", title="Equipment", icon="🏋️"),
+            st.Page("pages_/payments_recent.py", title="Recent", icon="🕒"),
         ],
     }
     if st.session_state.user["role"] == "admin":
-        pages["Settings"].append(st.Page("pages_/users.py", title="Users", icon="🔑"))
+        pages[""].insert(3, st.Page("pages_/reports.py", title="Reports", icon="📊"))
+        pages["Settings"] = [
+            st.Page("pages_/settings_plans.py", title="Membership Plans", icon="💳"),
+            st.Page("pages_/settings_gym.py", title="Gym Settings", icon="⚙️"),
+            st.Page("pages_/equipment.py", title="Equipment", icon="🏋️"),
+            st.Page("pages_/users.py", title="Users", icon="🔑"),
+        ]
 
     nav = st.navigation(pages)
 
